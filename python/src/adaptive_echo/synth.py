@@ -194,7 +194,9 @@ if __name__ == "__main__":
         times = jnp.linspace(0, length, num_samples)
         print(times.shape)
 
-        outputs = normalize_wav(sigmoid_forward(times, params))
-        save_wav(f"example_sound_{seed:02d}.wav", outputs, sr)
+        path = f"example_sound_{seed:02d}.wav"
 
-        print("saved wav to example_sigmoid_forward.wav")
+        outputs = normalize_wav(sigmoid_forward(times, params))
+        save_wav(path, outputs, sr)
+
+        print(f"saved wav to {path}")
