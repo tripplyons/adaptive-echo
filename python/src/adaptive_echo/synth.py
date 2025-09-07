@@ -31,10 +31,24 @@ def env(time, length, attack, decay, sustain, release):
 
 
 # waveform + noise generator
-def osc(rng, time, freq, phase_shift, warmth, harshness, amplitude, noise_level):
-    noise = jax.random.normal(rng, time.shape) * 0.25
+def osc(
+    rng,
+    time,
+    freq,
+    phase_shift,
+    warmth,
+    harshness,
+    amplitude,
+    noise_level,
+    modulation=None,
+    fm_amount=0,
+):
+    noise = jax.random.normal(rng, time.shape) * 0.2
 
-    phase = (time * freq) % 1
+    phase = time * freq
+    if modulation is not None:
+        phase += modulation * fm_amount
+    phase %= 1
 
     phase = 0.5 * (phase**warmth - (1 - phase) ** warmth + 1)
 
@@ -45,7 +59,7 @@ def osc(rng, time, freq, phase_shift, warmth, harshness, amplitude, noise_level)
 
     wave = jnp.sign(sin) * jnp.abs(sin) ** harshness * amplitude
 
-    noise_interp = 0.25 * noise_level
+    noise_interp = 0.2 * noise_level
 
     return linear_interp(wave, noise, noise_interp)
 
@@ -75,7 +89,16 @@ def env_uniform(time, length, attack, decay, sustain, release):
 
 
 def osc_uniform(
-    rng, time, freq, phase_shift, warmth, harshness, amplitude, noise_level
+    rng,
+    time,
+    freq,
+    phase_shift,
+    warmth,
+    harshness,
+    amplitude,
+    noise_level,
+    modulation=None,
+    fm_amount=0,
 ):
     min_freq = jnp.log2(10) * 12
     max_freq = jnp.log2(20000) * 12
@@ -98,20 +121,35 @@ def osc_uniform(
     max_amplitude = 1
     amplitude = linear_interp(min_amplitude, max_amplitude, amplitude)
 
-    return osc(rng, time, freq, phase_shift, warmth, harshness, amplitude, noise_level)
+    return osc(
+        rng,
+        time,
+        freq,
+        phase_shift,
+        warmth,
+        harshness,
+        amplitude,
+        noise_level,
+        modulation,
+        fm_amount,
+    )
 
 
 def synth(
     rng,
     time,
-    env_vol_settings,
+    env_vol_a_settings,
+    env_vol_b_settings,
     env_mod_settings,
     osc_a_settings,
     osc_b_settings,
     osc_a_mod_settings,
     osc_b_mod_settings,
+    env_fm_setting,
+    fm_range,
 ):
-    env_vol = env_uniform(time, *env_vol_settings)
+    env_vol_a = env_uniform(time, *env_vol_a_settings)
+    env_vol_b = env_uniform(time, *env_vol_b_settings)
     env_mod = env_uniform(time, *env_mod_settings)
 
     osc_a_settings_modulated = linear_interp(
@@ -123,14 +161,30 @@ def synth(
 
     rng_a, rng_b = jax.random.split(rng, 2)
 
-    osc_a = osc_uniform(rng_a, time, *osc_a_settings_modulated)
+    min_fm = 0.001
+    max_fm = 0.1
+    start_fm = exp_interp(min_fm, max_fm, fm_range[0])
+    end_fm = exp_interp(min_fm, max_fm, fm_range[1])
+    start_fm = fm_range[0]
+    end_fm = fm_range[1]
+    env_fm = env_uniform(time, *env_fm_setting)
+    fm_amount = linear_interp(start_fm, end_fm, env_fm)
     osc_b = osc_uniform(rng_b, time, *osc_b_settings_modulated)
+    # a is carrier, b is modulator for FM
+    osc_a = osc_uniform(
+        rng_a, time, *osc_a_settings_modulated, modulation=osc_b, fm_amount=fm_amount
+    )
 
-    return (osc_a + osc_b) * env_vol / 2
+    osc_a = osc_a * env_vol_a
+    osc_b = osc_b * env_vol_b
+
+    return osc_a + osc_b
 
 
 synth_parallel = jax.vmap(
-    synth, in_axes=(None, 0, None, None, None, None, None, None), out_axes=0
+    synth,
+    in_axes=(None, 0, None, None, None, None, None, None, None, None, None),
+    out_axes=0,
 )
 
 
@@ -138,33 +192,50 @@ def forward(times, params, seed=0):
     return synth_parallel(
         jax.random.PRNGKey(seed),
         times,
-        params["env_vol_settings"],
+        params["env_vol_a_settings"],
+        params["env_vol_b_settings"],
         params["env_mod_settings"],
         params["osc_a_settings"],
         params["osc_b_settings"],
         params["osc_a_mod_settings"],
         params["osc_b_mod_settings"],
+        params["env_fm_setting"],
+        params["fm_range"],
     )
 
 
 def get_initial_settings(rng):
-    env_vol_rng, env_mod_rng, osc_a_rng, osc_b_rng, osc_a_mod_rng, osc_b_mod_rng = (
-        jax.random.split(rng, 6)
-    )
-    env_vol_settings = jax.random.normal(env_vol_rng, (5,))
+    (
+        env_vol_a_rng,
+        env_vol_b_rng,
+        env_mod_rng,
+        osc_a_rng,
+        osc_b_rng,
+        osc_a_mod_rng,
+        osc_b_mod_rng,
+        env_fm_rng,
+        fm_rng,
+    ) = jax.random.split(rng, 9)
+    env_vol_a_settings = jax.random.normal(env_vol_a_rng, (5,))
+    env_vol_b_settings = jax.random.normal(env_vol_b_rng, (5,))
     env_mod_settings = jax.random.normal(env_mod_rng, (5,))
     osc_a_settings = jax.random.normal(osc_a_rng, (6,))
     osc_b_settings = jax.random.normal(osc_b_rng, (6,))
     osc_a_mod_settings = jax.random.normal(osc_a_mod_rng, (6,))
     osc_b_mod_settings = jax.random.normal(osc_b_mod_rng, (6,))
+    env_fm_setting = jax.random.normal(env_fm_rng, (5,))
+    fm_range = jax.random.normal(fm_rng, (2,))
 
     return {
-        "env_vol_settings": env_vol_settings,
+        "env_vol_a_settings": env_vol_a_settings,
+        "env_vol_b_settings": env_vol_b_settings,
         "env_mod_settings": env_mod_settings,
         "osc_a_settings": osc_a_settings,
         "osc_b_settings": osc_b_settings,
         "osc_a_mod_settings": osc_a_mod_settings,
         "osc_b_mod_settings": osc_b_mod_settings,
+        "env_fm_setting": env_fm_setting,
+        "fm_range": fm_range,
     }
 
 
@@ -174,12 +245,15 @@ def sigmoid(x):
 
 def sigmoid_forward(times, params, seed=0):
     sigmoid_params = {
-        "env_vol_settings": sigmoid(params["env_vol_settings"]),
+        "env_vol_a_settings": sigmoid(params["env_vol_a_settings"]),
+        "env_vol_b_settings": sigmoid(params["env_vol_b_settings"]),
         "env_mod_settings": sigmoid(params["env_mod_settings"]),
         "osc_a_settings": sigmoid(params["osc_a_settings"]),
         "osc_b_settings": sigmoid(params["osc_b_settings"]),
         "osc_a_mod_settings": sigmoid(params["osc_a_mod_settings"]),
         "osc_b_mod_settings": sigmoid(params["osc_b_mod_settings"]),
+        "env_fm_setting": sigmoid(params["env_fm_setting"]),
+        "fm_range": sigmoid(params["fm_range"]),
     }
 
     return forward(times, sigmoid_params, seed)
