@@ -13,7 +13,20 @@ def exp_interp(a, b, t):
 
 
 # envolope generator
-def env(time, length, attack, decay, sustain, release):
+def env(
+    # time
+    time,
+    # total time (after filling with sustain)
+    length,
+    # attack time
+    attack,
+    # decay time
+    decay,
+    # sustain level
+    sustain,
+    # release time
+    release,
+):
     value = jnp.where(
         time < attack,
         time / attack,
@@ -32,27 +45,36 @@ def env(time, length, attack, decay, sustain, release):
 
 # waveform + noise generator
 def osc(
+    # random number generator (for noise)
     rng,
+    # time
     time,
+    # frequency
     freq,
+    # phase shift
     phase_shift,
+    # amount of even harmonics (one axis of the wavetable)
     warmth,
+    # amount of higher harmonics (another axis of the wavetable)
     harshness,
+    # overall volume
     amplitude,
+    # amount of noise
     noise_level,
+    # signal for frequency modulation
     modulation=None,
+    # amount of frequency modulation
     fm_amount=0,
 ):
     noise = jax.random.normal(rng, time.shape) * 0.2
 
-    phase = time * freq
+    phase = time * freq + phase_shift
     if modulation is not None:
         phase += modulation * fm_amount
     phase %= 1
 
     phase = 0.5 * (phase**warmth - (1 - phase) ** warmth + 1)
 
-    phase += phase_shift
     phase *= 2 * jnp.pi
 
     sin = jnp.sin(phase)
@@ -64,6 +86,7 @@ def osc(
     return linear_interp(wave, noise, noise_interp)
 
 
+# use envelope generator with inputs from 0 to 1
 def env_uniform(time, length, attack, decay, sustain, release):
     min_length = 0.1
     max_length = 1.0
@@ -88,6 +111,7 @@ def env_uniform(time, length, attack, decay, sustain, release):
     return env(time, length, attack, decay, sustain, release)
 
 
+# use oscillator generator with inputs from 0 to 1
 def osc_uniform(
     rng,
     time,
@@ -135,23 +159,26 @@ def osc_uniform(
     )
 
 
+# synthesize a single sample at a time
 def synth(
-    rng,
-    time,
-    env_vol_a_settings,
-    env_vol_b_settings,
-    env_mod_settings,
-    osc_a_settings,
-    osc_b_settings,
-    osc_a_mod_settings,
-    osc_b_mod_settings,
-    env_fm_setting,
-    fm_range,
+    rng,  # random number generator
+    time,  # time
+    env_vol_a_settings,  # envelope for volume of osc_a
+    env_vol_b_settings,  # envelope for volume of osc_b
+    env_mod_settings,  # envelope for modulation amount
+    osc_a_settings,  # settings for when osc_a is at no modulation
+    osc_b_settings,  # settings for when osc_b is at no modulation
+    osc_a_mod_settings,  # settings for when osc_a is at full modulation
+    osc_b_mod_settings,  # settings for when osc_b is at full modulation
+    env_fm_setting,  # envelope for frequency modulation amount
+    fm_range,  # range of frequency modulation amount
 ):
+    # calculate envelopes
     env_vol_a = env_uniform(time, *env_vol_a_settings)
     env_vol_b = env_uniform(time, *env_vol_b_settings)
     env_mod = env_uniform(time, *env_mod_settings)
 
+    # interpolate settings from modulation
     osc_a_settings_modulated = linear_interp(
         osc_a_settings, osc_a_mod_settings, env_mod
     )
@@ -159,28 +186,33 @@ def synth(
         osc_b_settings, osc_b_mod_settings, env_mod
     )
 
-    rng_a, rng_b = jax.random.split(rng, 2)
-
-    min_fm = 0.001
-    max_fm = 0.1
+    # calculate frequency modulation amount
+    min_fm = 0.005
+    max_fm = 0.5
     start_fm = exp_interp(min_fm, max_fm, fm_range[0])
     end_fm = exp_interp(min_fm, max_fm, fm_range[1])
     start_fm = fm_range[0]
     end_fm = fm_range[1]
     env_fm = env_uniform(time, *env_fm_setting)
     fm_amount = linear_interp(start_fm, end_fm, env_fm)
+
+    # calculate oscillators
+    rng_a, rng_b = jax.random.split(rng, 2)
     osc_b = osc_uniform(rng_b, time, *osc_b_settings_modulated)
     # a is carrier, b is modulator for FM
     osc_a = osc_uniform(
         rng_a, time, *osc_a_settings_modulated, modulation=osc_b, fm_amount=fm_amount
     )
 
+    # multiply by envelopes
     osc_a = osc_a * env_vol_a
     osc_b = osc_b * env_vol_b
 
+    # add them together
     return osc_a + osc_b
 
 
+# parallelize the function across multiple times/samples for the same parameters
 synth_parallel = jax.vmap(
     synth,
     in_axes=(None, 0, None, None, None, None, None, None, None, None, None),
@@ -188,6 +220,7 @@ synth_parallel = jax.vmap(
 )
 
 
+# synthesize a sample from a set of parameters
 def forward(times, params, seed=0):
     return synth_parallel(
         jax.random.PRNGKey(seed),
@@ -204,6 +237,7 @@ def forward(times, params, seed=0):
     )
 
 
+# generate random settings for the synthesizer (with the range of all real numbers, using a normal distribution)
 def get_initial_settings(rng):
     (
         env_vol_a_rng,
@@ -216,6 +250,7 @@ def get_initial_settings(rng):
         env_fm_rng,
         fm_rng,
     ) = jax.random.split(rng, 9)
+
     env_vol_a_settings = jax.random.normal(env_vol_a_rng, (5,))
     env_vol_b_settings = jax.random.normal(env_vol_b_rng, (5,))
     env_mod_settings = jax.random.normal(env_mod_rng, (5,))
@@ -239,10 +274,12 @@ def get_initial_settings(rng):
     }
 
 
+# sigmoid function to convert from real numbers to 0 to 1
 def sigmoid(x):
     return 0.001 + 0.998 / (1 + jnp.exp(-x))
 
 
+# convert from real parameters to 0 to 1 parameters and generate a sample
 def sigmoid_forward(times, params, seed=0):
     sigmoid_params = {
         "env_vol_a_settings": sigmoid(params["env_vol_a_settings"]),
@@ -262,15 +299,17 @@ def sigmoid_forward(times, params, seed=0):
 if __name__ == "__main__":
     for seed in range(10):
         params = get_initial_settings(jax.random.PRNGKey(seed))
+        # a standard sample rate
         sr = 44100
+        # a length of 2 seconds
         length = 2
+        # calculate the number of samples
         num_samples = int(sr * length)
+        # create an array of the time of each sample
         times = jnp.linspace(0, length, num_samples)
-        print(times.shape)
 
+        # save the wav file
         path = f"example_sound_{seed:02d}.wav"
-
         outputs = normalize_wav(sigmoid_forward(times, params))
         save_wav(path, outputs, sr)
-
         print(f"saved wav to {path}")
