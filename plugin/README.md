@@ -6,17 +6,13 @@ Any paths referenced in this document are relative to the folder containing this
 
 ## Requirements
 
-- Install CMake from [here](https://cmake.org/download/) or your preferred package manager.
-- Install Ninja from [here](https://ninja-build.org/) or your preferred package manager.
-- Install Clang from [here](https://clang.llvm.org/) or your preferred package manager.
-
-### VST3 Support
+### All Platforms
 
 - Download the [VST3 SDK](https://www.steinberg.net/en/company/developers.html) and extract it to `external/VST3_SDK`.
 
 ### MacOS
 
-#### Homebrew as Package Manager (Recommended)
+#### Using Homebrew
 
 ```bash
 brew install cmake ninja llvm
@@ -24,11 +20,38 @@ brew install cmake ninja llvm
 
 ### Linux
 
-I have not compiled on Linux yet, but I will do so soon.
+#### Ubuntu/Debian
+
+```bash
+sudo apt update
+sudo apt install cmake ninja-build clang build-essential
+```
+
+#### Fedora
+
+```bash
+sudo dnf install cmake ninja-build clang
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S cmake ninja clang
+```
 
 ### Windows
 
-I have not compiled on Windows yet, but I will do so soon.
+#### Using Chocolatey
+
+```powershell
+choco install cmake ninja llvm
+```
+
+### Build Requirements From Source (Harder)
+
+- Install CMake from [here](https://cmake.org/download/)
+- Install Ninja from [here](https://ninja-build.org/)
+- Install Clang from [here](https://clang.llvm.org/)
 
 ## Build
 
