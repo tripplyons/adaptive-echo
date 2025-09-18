@@ -10,6 +10,8 @@ Adaptive Echo is a synthesizer audio plugin that can listen to a sound and recre
 
 This is the main implementation of all features. It is a instrument plugin written in C++ using the JUCE framework.
 
+See [Plugin README](plugin/README.md) for details.
+
 ## Python Prototype
 
 A prototype implementation of the synthesizer in Python. It uses JAX for differentiation and compilation and JAX's Numpy API.
