@@ -38,8 +38,7 @@ def env(
             ),
         ),
     )
-    value = jnp.where(value < 0, 0, value)
-    value = jnp.where(value > 1, 1, value)
+    value = jnp.clip(value, 0, 1)
     return value
 
 

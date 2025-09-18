@@ -1,0 +1,4 @@
+# build information from cmake
+build
+# cache used by clangd
+.cache

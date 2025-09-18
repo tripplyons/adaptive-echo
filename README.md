@@ -4,7 +4,11 @@ A fully differentiable synthesizer capable of learning from sounds
 
 ## Vision
 
-Adaptive Echo is a synthesizer VST plugin that can listen to a sound and recreate it using gradient descent and machine learning models. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
+Adaptive Echo is a synthesizer audio plugin that can listen to a sound and recreate it using gradient descent and machine learning models. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
+
+## C++ Audio Plugin
+
+This is the main implementation of all features. It is a instrument plugin written in C++ using the JUCE framework.
 
 ## Python Prototype
 
