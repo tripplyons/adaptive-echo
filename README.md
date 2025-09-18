@@ -21,3 +21,7 @@ See [Python README](python/README.md) for details.
 ## License
 
 Adaptive Echo is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Contributing
+
+See [the contribution guidelines](CONTRIBUTING.md) for details.

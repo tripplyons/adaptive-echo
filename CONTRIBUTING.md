@@ -20,4 +20,3 @@ If you are not a team member, follow the instructions below.
 4. Make your changes and commit them on the new branch (`git commit -m "Your commit message"`).
 5. Push the changes to your branch (`git push origin <your-name>/<your-changes>`).
 6. Create a pull request to merge your changes into the upstream repository.
-
