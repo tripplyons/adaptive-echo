@@ -38,7 +38,7 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
       getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
   g.setColour(juce::Colours::white);
   g.setFont(16.0f);
-  g.drawFittedText("AdaptiveEcho - Sine Generator Example",
+  g.drawFittedText("Adaptive Echo - Sine Generator Example",
                    getLocalBounds().reduced(10, 6),
                    juce::Justification::centredTop, 1);
 }
