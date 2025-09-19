@@ -1,6 +1,12 @@
 # Contribution Guidelines
 
-## Team Members
+## Formatting
+
+Follow the formatting instructions in the [plugin's README](plugin/README.md#formatting) to ensure consistent code style.
+
+## How to Contribute
+
+### Team Members
 
 If you are a team member (i.e. added to the contributors list on GitHub), follow the instructions below.
 
@@ -10,7 +16,7 @@ If you are a team member (i.e. added to the contributors list on GitHub), follow
 4. Push the changes to your branch (`git push origin <your-name>/<your-changes>`).
 5. Create a pull request to merge your changes into the main branch.
 
-## Anyone
+### Anyone
 
 If you are not a team member, follow the instructions below.
 

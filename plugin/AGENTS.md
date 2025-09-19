@@ -18,12 +18,22 @@ plugin/
   README.md # Instructions for humans
 ```
 
-## Building the Project
+## Building
 
 ```bash
 cmake -S . -B build -G Ninja
 cmake --build build
 ```
+
+## Formatting
+
+When making changes to source files, ensure code is formatted according to the project's clang-format configuration. Run the following command after editing files:
+
+```bash
+clang-format -i src/*.cpp src/*.hpp
+```
+
+This will automatically format the code to match the project's style guidelines.
 
 ## Common Errors
 
@@ -32,4 +42,3 @@ cmake --build build
 Any permissions errors related to writing to targets are likely due to the
 restricted permissions given to an AI Agent, and are not an issue with the
 plugin or build system.
-

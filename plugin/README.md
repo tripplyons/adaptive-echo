@@ -53,7 +53,7 @@ choco install cmake ninja llvm
 - Install Ninja from [here](https://ninja-build.org/)
 - Install Clang from [here](https://clang.llvm.org/)
 
-## Build
+## Building
 
 ```bash
 cmake -S . -B build -G Ninja
@@ -62,9 +62,16 @@ cmake --build build
 
 This will build the plugin to `build/AdaptiveEcho_artefacts/`.
 
-## Run
+## Formatting
+
+This project uses clang-format for consistent code style. To format your code:
+
+```bash
+clang-format -i src/*.cpp src/*.hpp
+```
+
+## Running
 
 To run the standalone version of the plugin, run the binary you found in `build/AdaptiveEcho_artefacts/Standalone/`.
 
 To run a VST3/AU version of the plugin, you can find the plugin files in `build/AdaptiveEcho_artefacts/VST3/` or `build/AdaptiveEcho_artefacts/AU/`.
-
