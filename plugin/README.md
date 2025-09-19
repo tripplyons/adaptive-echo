@@ -24,7 +24,7 @@ brew install cmake ninja llvm
 
 ```bash
 sudo apt update
-sudo apt install cmake ninja-build clang build-essential
+sudo apt install cmake ninja-build clang build-essential libwebkit2gtk-4.1-dev
 ```
 
 #### Fedora
@@ -44,7 +44,7 @@ sudo pacman -S cmake ninja clang
 #### Using Chocolatey
 
 ```powershell
-choco install cmake ninja llvm
+choco install cmake ninja llvm windows-sdk-10-version-2104-all
 ```
 
 ### Build Requirements From Source (Harder)
