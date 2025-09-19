@@ -45,6 +45,7 @@ sudo pacman -S cmake ninja clang
 
 ```powershell
 choco install cmake ninja llvm windows-sdk-10-version-2104-all
+choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --includeOptional"
 ```
 
 ### Build Requirements From Source (Harder)
