@@ -1,0 +1,26 @@
+# List of Synthesizer Settings
+
+- There are two oscillators:
+    - One is oscillator A (carrier for frequency modulation)
+    - The other is oscillator B (modulator for frequency modulation)
+	- Each oscillator has two of sets of settings (one for low modulation and one for high modulation):
+		- Frequency (float)
+		- Phase shift (float)
+		- Warmth (float)
+		- Harshness (float)
+		- Amplitude (float)
+		- Noise level (float)
+- There are 4 envelopes:
+	- One controls low/high modulation for both oscillators
+	- One controls the volume of oscillator A
+	- One controls the volume of oscillator B
+	- One controls the amount of frequency modulation
+	- For each envelope:
+		- Length (float)
+		- Attack (float)
+		- Decay (float)
+		- Sustain (float)
+		- Release (float)
+- There are 2 settings controlling frequency modulation
+	- Start frequency modulation amount (float)
+	- End frequency modulation amount (float)
