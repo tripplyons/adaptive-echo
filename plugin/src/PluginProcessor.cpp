@@ -6,8 +6,8 @@ AdaptiveEchoAudioProcessor::AdaptiveEchoAudioProcessor()
           "Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", createParameterLayout()) {
     volumeSmoothed.reset(currentSampleRate, 0.02); // 20ms smoothing
+    noteAmpSmoothed.reset(currentSampleRate, 0.02);
 }
-
 juce::AudioProcessorValueTreeState::ParameterLayout
 AdaptiveEchoAudioProcessor::createParameterLayout() {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
@@ -15,9 +15,6 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "volume", "Volume",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.0f, 1.0f), 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "freq", "Frequency",
-        juce::NormalisableRange<float>(20.0f, 2000.0f, 0.01f, 0.3f), 440.0f));
 
     return {params.begin(), params.end()};
 }
@@ -26,17 +23,15 @@ void AdaptiveEchoAudioProcessor::prepareToPlay(double sampleRate,
                                                int /*samplesPerBlock*/) {
     currentSampleRate = sampleRate;
 
-    auto *freqParam = apvts.getRawParameterValue("freq");
-    const double frequency = freqParam != nullptr ? freqParam->load() : 440.0;
-    phaseInc =
-        juce::MathConstants<double>::twoPi * frequency / currentSampleRate;
-
     phase = {0.0, 0.0};
 
     volumeSmoothed.reset(currentSampleRate, 0.02);
+    noteAmpSmoothed.reset(currentSampleRate, 0.02);
+
     auto *volParam = apvts.getRawParameterValue("volume");
     volumeSmoothed.setCurrentAndTargetValue(
         volParam != nullptr ? volParam->load() : 0.5f);
+    noteAmpSmoothed.setCurrentAndTargetValue(0.0f); // Start silent
 }
 
 void AdaptiveEchoAudioProcessor::releaseResources() {}
@@ -53,22 +48,37 @@ bool AdaptiveEchoAudioProcessor::isBusesLayoutSupported(
 
 void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                               juce::MidiBuffer &midi) {
-    juce::ignoreUnused(midi);
-
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
     const int numChans =
         juce::jmin(2, buffer.getNumChannels()); // we track phase for 2 chans
 
     auto *volParam = apvts.getRawParameterValue("volume");
-    if (volParam != nullptr)
-        volumeSmoothed.setTargetValue(volParam->load());
+    const float baseVolume = volParam != nullptr ? volParam->load() : 0.5f;
+    volumeSmoothed.setTargetValue(baseVolume);
 
-    auto *freqParam = apvts.getRawParameterValue("freq");
-    if (freqParam != nullptr) {
-        const double frequency = freqParam->load();
-        phaseInc =
-            juce::MathConstants<double>::twoPi * frequency / currentSampleRate;
+    // Inject on-screen keyboard events into MIDI IN buffer
+    midiState.processNextMidiBuffer(midi, 0, numSamples, true);
+
+    // Parse MIDI for note on/off events
+    for (const auto metadata : midi) {
+        const auto msg = metadata.getMessage();
+        if (msg.isNoteOn()) {
+            activeNote = msg.getNoteNumber();
+            uint8_t vel = (uint8_t)msg.getVelocity();
+
+            // Compute frequency
+            const double frequency =
+                juce::MidiMessage::getMidiNoteInHertz(activeNote);
+            phaseInc = juce::MathConstants<double>::twoPi * frequency /
+                       currentSampleRate;
+
+            // Set amplitude target (baseVolume * velocity)
+            const float targetAmp = baseVolume * (float(vel) / 127.0f);
+            noteAmpSmoothed.setTargetValue(targetAmp);
+        } else {
+            noteAmpSmoothed.setTargetValue(0.0f);
+        }
     }
 
     for (int ch = 0; ch < numChans; ++ch) {
@@ -76,7 +86,7 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         double ph = phase[(size_t)ch];
 
         for (int n = 0; n < numSamples; ++n) {
-            const float amp = volumeSmoothed.getNextValue();
+            const float amp = noteAmpSmoothed.getNextValue();
             const float s = (float)std::sin(ph);
             out[n] = s * amp;
 

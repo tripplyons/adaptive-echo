@@ -2,9 +2,11 @@
 
 AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     AdaptiveEchoAudioProcessor &p)
-    : AudioProcessorEditor(&p), processor(p) {
+    : AudioProcessorEditor(&p), processor(p),
+      midiKeyboard(processor.getMidiKeyboardState(),
+                   juce::MidiKeyboardComponent::horizontalKeyboard) {
     setResizable(true, true);
-    setSize(500, 160);
+    setSize(500, 220);
 
     // Volume slider
     volumeSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -19,18 +21,8 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     volumeAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "volume", volumeSlider);
 
-    // Frequency slider
-    freqSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    freqSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
-    freqSlider.setRange(20.0, 2000.0, 0.01);
-    addAndMakeVisible(freqSlider);
-
-    freqLabel.setText("Frequency", juce::dontSendNotification);
-    freqLabel.setJustificationType(juce::Justification::centred);
-    addAndMakeVisible(freqLabel);
-
-    freqAttachment =
-        std::make_unique<SliderAttachment>(processor.apvts, "freq", freqSlider);
+    addAndMakeVisible(midiKeyboard);
+    midiKeyboard.setAvailableRange(24, 108);
 }
 
 void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
@@ -38,23 +30,20 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
         getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
     g.setColour(juce::Colours::white);
     g.setFont(16.0f);
-    g.drawFittedText("Adaptive Echo - Sine Generator Example",
+    g.drawFittedText("Adaptive Echo - Sine Generator Example (w/ MIDI)",
                      getLocalBounds().reduced(10, 6),
                      juce::Justification::centredTop, 1);
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
-    auto bounds = getLocalBounds().reduced(20);
-    auto top = bounds.removeFromTop(30);
+    auto bounds = getLocalBounds().reduced(12);
+    midiKeyboard.setBounds(bounds.removeFromBottom(100).reduced(4));
 
-    juce::ignoreUnused(top);
+    auto header = bounds.removeFromTop(34);
+    auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
-    auto row = bounds.withSizeKeepingCentre(400, 100);
-    volumeSlider.setBounds(row.removeFromLeft(200));
+    auto controlArea = row.removeFromTop(100).withSizeKeepingCentre(200, 100);
+    volumeSlider.setBounds(controlArea.removeFromLeft(160).reduced(4));
     volumeLabel.setBounds(volumeSlider.getX(), volumeSlider.getBottom(),
                           volumeSlider.getWidth(), 20);
-
-    freqSlider.setBounds(row.removeFromLeft(200));
-    freqLabel.setBounds(freqSlider.getX(), freqSlider.getBottom(),
-                        freqSlider.getWidth(), 20);
 }
