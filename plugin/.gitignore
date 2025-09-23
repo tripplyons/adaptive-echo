@@ -2,3 +2,6 @@
 build
 # cache used by clangd
 .cache
+# Windows builds
+CMakeCache.txt
+CMakeFiles
