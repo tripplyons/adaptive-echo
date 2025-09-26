@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\villac3\Desktop\adaptiveecho\adaptive-echo\dataset-generator\build\CMakeFiles\4578ce1f8f873d7a35d24124ee949c14\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{E0A82209-FEF9-3F61-A23D-B8097ED53C04}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+^C:\USERS\VILLAC3\DESKTOP\ADAPTIVEECHO\ADAPTIVE-ECHO\DATASET-GENERATOR\BUILD\CMAKEFILES\4578CE1F8F873D7A35D24124EE949C14\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/villac3/Desktop/adaptiveecho/adaptive-echo/dataset-generator -BC:/Users/villac3/Desktop/adaptiveecho/adaptive-echo/dataset-generator/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/villac3/Desktop/adaptiveecho/adaptive-echo/dataset-generator/build/AdaptiveEchoDatasetGenerator.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
