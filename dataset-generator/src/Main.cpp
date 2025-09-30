@@ -3,10 +3,12 @@
 #include <stdexcept>
 #include <fstream>
 #include <random>
+#include <thread>
 
 void runProgram(int numFiles, char *outputPath);
 double** initializeCsv(char* outputPath, int numFiles);
-void generateFile(char* outputPath);
+void generateFiles(char *outputPath, double **weightArr);
+void generateFile(char *outputPath, double **weightArr, int threadNum);
 
 // Since this generator runs without any user input, it can run off of minimal
 // external libraries The main dependency this will rely on is a generator from
@@ -36,10 +38,14 @@ int main(int argc, char** argv) {
 }
 
 void runProgram(int numFiles, char *outputPath) {
-    initializeCsv(outputPath, numFiles);
+    double** weightArr = initializeCsv(outputPath, numFiles);
     for (int i = 0; i < numFiles; i++) {
-        generateFile(outputPath);
+        generateFiles(outputPath, weightArr);
     }
+    for (int i = 0; i < weightArr.size(); i++) {
+        free(weightArr[i]);
+    }
+    free(weightArr);
 }
 
 // Creates a 2d array of doubles
@@ -73,7 +79,18 @@ double** initializeCsv(char* outputPath, int numFiles) {
     return weightArr;
 }
 
-void generateFile(char* outputPath) {
+void generateFile(char* outputPath, double** weightArr, int threadNum, int totalThreads) {
+    int len = weightArr.size();
+    for (int i = threadNum; i < weightArr.size(); i+=totalThreads) {
+        std::cout << "Working on item: " << (i + 1) << std::endl;
+    }
+}
+
+void generateFiles(char* outputPath, double** weightArr) {
     // This is pretty much placeholder since the implementation is TBD, but it will latch onto the main plugin to do its calculations
     // Critical that this gets implemented as a multithreaded operation, since the idea to produce massive number of files for a dataset
+    int nThreads = 8;
+    for (int i = 0; i < nThreads; i++) {
+        std::thread t1(generateFile, outputPath,weightArr,i,totalThreads);
+    }
 }
