@@ -1,7 +1,8 @@
 #pragma once
 
+#include <JuceHeader.h>
 #include <array>
-#include <juce_audio_processors/juce_audio_processors.h>
+#include <vector>
 
 class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
   public:
@@ -22,7 +23,7 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
 
     //==============================================================================
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -43,6 +44,11 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     createParameterLayout();
     juce::AudioProcessorValueTreeState apvts;
 
+    // Expose internal MidiKeyboardState
+    juce::MidiKeyboardState &getMidiKeyboardState() noexcept {
+        return midiState;
+    }
+
   private:
     // Simple sine generator state per channel
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
@@ -52,6 +58,10 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     // Smoothed volume to avoid zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>
         volumeSmoothed;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>
+        noteAmpSmoothed;
+    int activeNote;
+    juce::MidiKeyboardState midiState;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessor)
 };

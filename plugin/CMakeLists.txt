@@ -130,6 +130,8 @@ install(TARGETS AdaptiveEcho
 
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 
+juce_generate_juce_header(${PROJECT_NAME})
+
 add_executable(Main)
 
 target_sources(Main PRIVATE src/Main.cpp)

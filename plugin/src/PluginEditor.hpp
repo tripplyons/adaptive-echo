@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.hpp"
-#include <juce_gui_extra/juce_gui_extra.h>
+#include <JuceHeader.h>
 
 class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
   public:
@@ -16,13 +16,14 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
 
     juce::Slider volumeSlider;
     juce::Label volumeLabel;
-    juce::Slider freqSlider;
-    juce::Label freqLabel;
+
+    juce::MidiKeyboardComponent midiKeyboard{
+        processor.getMidiKeyboardState(),
+        juce::MidiKeyboardComponent::horizontalKeyboard};
 
     using SliderAttachment =
         juce::AudioProcessorValueTreeState::SliderAttachment;
     std::unique_ptr<SliderAttachment> volumeAttachment;
-    std::unique_ptr<SliderAttachment> freqAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
         AdaptiveEchoAudioProcessorEditor)
