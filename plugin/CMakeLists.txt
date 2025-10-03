@@ -15,11 +15,10 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.1)
 
-    include_directories(${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
+    target_include_directories(AdaptiveEcho SYSTEM PRIVATE ${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
 endif()
 
 find_package(CURL REQUIRED)
-#target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -36,6 +35,25 @@ FetchContent_Declare(
     GIT_TAG        8.0.10
 )
 FetchContent_MakeAvailable(juce)
+
+# Fetch Catch2
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG v3.5.2
+)
+FetchContent_MakeAvailable(Catch2)
+list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
+
+# Fetch Enzyme
+FetchContent_Declare(
+  autodiff
+  GIT_REPOSITORY https://github.com/autodiff/autodiff.git
+  GIT_TAG v1.1.2
+)
+FetchContent_Populate(autodiff)
+set(AUTODIFF_BUILD_TESTS OFF)
+add_subdirectory(${autodiff_SOURCE_DIR})
 
 # Plugin target
 juce_add_plugin(AdaptiveEcho
@@ -84,11 +102,7 @@ target_compile_definitions(AdaptiveEcho
 )
 
 # Warnings
-if (MSVC)
-    target_compile_options(AdaptiveEcho PRIVATE /W4 /permissive- /EHsc)
-else()
-    target_compile_options(AdaptiveEcho PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+target_compile_options(AdaptiveEcho PRIVATE -Wall -Wextra -Wpedantic)
 
 # LTO (Release)
 if (ADAPTIVEECHO_ENABLE_LTO)
@@ -115,4 +129,11 @@ install(TARGETS AdaptiveEcho
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+
 juce_generate_juce_header(${PROJECT_NAME})
+
+add_executable(Main)
+
+target_sources(Main PRIVATE src/Main.cpp)
+target_link_libraries(Main PRIVATE autodiff)
+target_compile_options(Main PRIVATE -Wall -Wextra -Wpedantic)
