@@ -45,15 +45,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
-# Fetch Enzyme
+# Fetch autodiff
 FetchContent_Declare(
-  autodiff
-  GIT_REPOSITORY https://github.com/autodiff/autodiff.git
-  GIT_TAG v1.1.2
+    autodiff
+    GIT_REPOSITORY https://github.com/autodiff/autodiff.git
+    GIT_TAG v1.1.2
 )
-FetchContent_Populate(autodiff)
 set(AUTODIFF_BUILD_TESTS OFF)
-add_subdirectory(${autodiff_SOURCE_DIR})
+FetchContent_MakeAvailable(autodiff)
 
 # Plugin target
 juce_add_plugin(AdaptiveEcho
@@ -132,8 +131,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 
 juce_generate_juce_header(${PROJECT_NAME})
 
-add_executable(Main)
+add_executable(Trainer)
 
-target_sources(Main PRIVATE src/Main.cpp)
-target_link_libraries(Main PRIVATE autodiff)
-target_compile_options(Main PRIVATE -Wall -Wextra -Wpedantic)
+target_sources(Trainer PRIVATE src/Trainer.cpp)
+target_link_libraries(Trainer PRIVATE autodiff)
+target_include_directories(Trainer PRIVATE ${autodiff_SOURCE_DIR})
+target_compile_options(Trainer PRIVATE -Wall -Wextra -Wpedantic)
