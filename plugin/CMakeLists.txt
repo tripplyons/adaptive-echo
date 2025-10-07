@@ -45,6 +45,16 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
+# Fetch Eigen3
+FetchContent_Declare(
+    eigen3
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+    GIT_TAG 3.4.1
+)
+set(EIGEN_BUILD_TESTING OFF)
+set(EIGEN_BUILD_DOC OFF)
+FetchContent_MakeAvailable(eigen3)
+
 # Fetch autodiff
 FetchContent_Declare(
     autodiff
@@ -52,6 +62,7 @@ FetchContent_Declare(
     GIT_TAG v1.1.2
 )
 set(AUTODIFF_BUILD_TESTS OFF)
+set(Eigen3_DIR ${eigen3_BINARY_DIR})
 FetchContent_MakeAvailable(autodiff)
 
 # Plugin target
@@ -134,6 +145,6 @@ juce_generate_juce_header(${PROJECT_NAME})
 add_executable(Trainer)
 
 target_sources(Trainer PRIVATE src/Trainer.cpp)
-target_link_libraries(Trainer PRIVATE autodiff)
+target_link_libraries(Trainer PRIVATE autodiff Eigen3::Eigen)
 target_include_directories(Trainer PRIVATE ${autodiff_SOURCE_DIR})
 target_compile_options(Trainer PRIVATE -Wall -Wextra -Wpedantic)
