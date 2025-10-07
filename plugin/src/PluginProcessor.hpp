@@ -4,6 +4,10 @@
 #include <array>
 #include <vector>
 
+#include "Envelope.hpp"
+#include "Note.hpp"
+#include <memory>
+
 class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
   public:
     AdaptiveEchoAudioProcessor();
@@ -54,14 +58,18 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
     double phaseInc = 0.0;                 // radians per sample
     double currentSampleRate = 44100.0;
+    std::shared_ptr<Note> activeNote = nullptr;
+    ADSREnvelope env;
+    std::shared_ptr<ADSREnvelope> env_ptr;
 
     // Smoothed volume to avoid zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>
         volumeSmoothed;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>
         noteAmpSmoothed;
-    int activeNote;
     juce::MidiKeyboardState midiState;
+
+    float a, d, s, r, ac, dc, rc;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessor)
 };
