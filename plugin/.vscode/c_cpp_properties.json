@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/build/_deps/autodiff-src",
+                "${workspaceFolder}/build/_deps/juce-src/modules",
+                "${workspaceFolder}/build/_deps/catch2-src/src",
+                "${workspaceFolder}/build/AdaptiveEcho_artefacts/JuceLibraryCode"
+            ],
+            "defines": [
+                "JUCE_APPLICATION_VERSION_STRING=\"0.1.0\"",
+                "JUCE_DISPLAY_SPLASH_SCREEN=0",
+                "JUCE_REPORT_APP_USAGE=0",
+                "JUCE_VST3_CAN_REPLACE_VST2=0"
+            ],
+            "macFrameworkPath": [],
+            "compilerPath": "/usr/bin/clang++",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "macos-clang-arm64",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json"
+        }
+    ],
+    "version": 4
+}
