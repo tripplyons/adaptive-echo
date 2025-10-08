@@ -10,7 +10,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
 
     // Volume slider
     volumeSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    volumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    volumeSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
     volumeSlider.setRange(0.0, 1.0, 0.0);
     addAndMakeVisible(volumeSlider);
 
@@ -18,8 +18,57 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     volumeLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(volumeLabel);
 
+    // ADSR
+    attackSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    attackSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    attackSlider.setRange(0.01, 5.0, 0.0);
+
+    attackLabel.setJustificationType(juce::Justification::centred);
+    attackLabel.setText("attack", juce::dontSendNotification);
+
+    addAndMakeVisible(attackSlider);
+    addAndMakeVisible(attackLabel);
+
+    decaySlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    decaySlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    decaySlider.setRange(0.01, 5.0, 0.0);
+
+    decayLabel.setJustificationType(juce::Justification::centred);
+    decayLabel.setText("decay", juce::dontSendNotification);
+
+    addAndMakeVisible(decaySlider);
+    addAndMakeVisible(decayLabel);
+
+    sustainSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    sustainSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    sustainSlider.setRange(0.0, 1.0, 0.0);
+
+    sustainLabel.setJustificationType(juce::Justification::centred);
+    sustainLabel.setText("sustain", juce::dontSendNotification);
+
+    addAndMakeVisible(sustainSlider);
+    addAndMakeVisible(sustainLabel);
+
+    releaseSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    releaseSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    releaseSlider.setRange(0.01, 5.0, 0.0);
+
+    releaseLabel.setJustificationType(juce::Justification::centred);
+    releaseLabel.setText("release", juce::dontSendNotification);
+
+    addAndMakeVisible(releaseSlider);
+    addAndMakeVisible(releaseLabel);
+
     volumeAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "volume", volumeSlider);
+    attackAttachment = std::make_unique<SliderAttachment>(
+        processor.apvts, "attack", attackSlider);
+    decayAttachment = std::make_unique<SliderAttachment>(processor.apvts,
+                                                         "decay", decaySlider);
+    sustainAttachment = std::make_unique<SliderAttachment>(
+        processor.apvts, "sustain", sustainSlider);
+    releaseAttachment = std::make_unique<SliderAttachment>(
+        processor.apvts, "release", releaseSlider);
 
     addAndMakeVisible(midiKeyboard);
     midiKeyboard.setAvailableRange(24, 108);
@@ -42,8 +91,26 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     auto header = bounds.removeFromTop(34);
     auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
-    auto controlArea = row.removeFromTop(100).withSizeKeepingCentre(200, 100);
-    volumeSlider.setBounds(controlArea.removeFromLeft(160).reduced(4));
+    int sliderWidth = bounds.getWidth() / 5; // one for volume + 4 ADSR
+
+    auto controlArea = row.removeFromTop(120);
+    volumeSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
     volumeLabel.setBounds(volumeSlider.getX(), volumeSlider.getBottom(),
                           volumeSlider.getWidth(), 20);
+
+    attackSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    attackLabel.setBounds(attackSlider.getX(), attackSlider.getBottom(),
+                          attackSlider.getWidth(), 20);
+
+    decaySlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    decayLabel.setBounds(decaySlider.getX(), decaySlider.getBottom(),
+                         decaySlider.getWidth(), 20);
+
+    sustainSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    sustainLabel.setBounds(sustainSlider.getX(), sustainSlider.getBottom(),
+                           sustainSlider.getWidth(), 20);
+
+    releaseSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
+                           releaseSlider.getWidth(), 20);
 }
