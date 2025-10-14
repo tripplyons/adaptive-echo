@@ -1,5 +1,4 @@
-#ifndef OSCILLATOR_HPP
-#define OSCILLATOR_HPP
+#pragma once
 
 #include <autodiff/reverse/var.hpp>
 
@@ -151,5 +150,3 @@ inline autodiff::var osc_uniform(
         rng, time, freq_norm, phase_shift_norm, warmth_norm,
         harshness_norm, amplitude_norm, noise_level_norm, 0.0, 0.0);
 }
-
-#endif
