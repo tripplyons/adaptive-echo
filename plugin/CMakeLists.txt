@@ -8,6 +8,73 @@ project(AdaptiveEcho
     LANGUAGES C CXX
 )
 
+if(UNIX)
+    # On Unix systems, use 'which' to find clang paths
+    execute_process(
+        COMMAND which clang
+        OUTPUT_VARIABLE CLANG_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE CLANG_RESULT
+    )
+
+    execute_process(
+        COMMAND which clang++
+        OUTPUT_VARIABLE CLANGXX_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE CLANGXX_RESULT
+    )
+
+    # Set compiler if command succeeded
+    if(CLANG_RESULT EQUAL 0 AND NOT CLANG_OUTPUT STREQUAL "")
+        set(CMAKE_C_COMPILER ${CLANG_OUTPUT} CACHE STRING "" FORCE)
+        message(STATUS "Found C compiler: ${CMAKE_C_COMPILER}")
+    else()
+        message(FATAL_ERROR "clang not found via 'which' command - clang is required for this build")
+    endif()
+
+    if(CLANGXX_RESULT EQUAL 0 AND NOT CLANGXX_OUTPUT STREQUAL "")
+        set(CMAKE_CXX_COMPILER ${CLANGXX_OUTPUT} CACHE STRING "" FORCE)
+        message(STATUS "Found CXX compiler: ${CMAKE_CXX_COMPILER}")
+    else()
+        message(FATAL_ERROR "clang++ not found via 'which' command - clang++ is required for this build")
+    endif()
+endif()
+if(WIN32)
+    # On Windows, use 'where' and extract first result (main/preferred installation)
+    execute_process(
+        COMMAND where clang
+        OUTPUT_VARIABLE CLANG_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE CLANG_RESULT
+    )
+
+    execute_process(
+        COMMAND where clang++
+        OUTPUT_VARIABLE CLANGXX_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE CLANGXX_RESULT
+    )
+
+    # Extract first line (main result) if command succeeded
+    if(CLANG_RESULT EQUAL 0 AND NOT CLANG_OUTPUT STREQUAL "")
+        # Get first line (handles both \r\n and \n)
+        string(REGEX MATCH "^[^\r\n]+" CLANG_PATH "${CLANG_OUTPUT}")
+        set(CMAKE_C_COMPILER ${CLANG_PATH} CACHE STRING "" FORCE)
+        message(STATUS "Found C compiler: ${CMAKE_C_COMPILER}")
+    else()
+        message(FATAL_ERROR "clang not found via 'where' command - clang is required for this build")
+    endif()
+
+    if(CLANGXX_RESULT EQUAL 0 AND NOT CLANGXX_OUTPUT STREQUAL "")
+        string(REGEX MATCH "^[^\r\n]+" CLANGXX_PATH "${CLANGXX_OUTPUT}")
+        set(CMAKE_CXX_COMPILER ${CLANGXX_PATH} CACHE STRING "" FORCE)
+        message(STATUS "Found CXX compiler: ${CMAKE_CXX_COMPILER}")
+    else()
+        message(FATAL_ERROR "clang++ not found via 'where' command - clang++ is required for this build")
+    endif()
+endif()
+
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
