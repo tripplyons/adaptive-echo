@@ -5,7 +5,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(AdaptiveEcho
     VERSION 0.1.0
     DESCRIPTION "Adaptive Echo - Audio Plugin"
-    LANGUAGES C CXX)
+    LANGUAGES C CXX
+)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,8 +15,6 @@ find_package(PkgConfig REQUIRED)
 if(UNIX AND NOT APPLE)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
     pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.1)
-
-    target_include_directories(AdaptiveEcho SYSTEM PRIVATE ${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
 endif()
 
 find_package(CURL REQUIRED)
@@ -45,15 +44,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
-# Fetch Eigen3
+# Fetch Eigen from official repository
 FetchContent_Declare(
     eigen3
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-    GIT_TAG 3.4.1
+    GIT_TAG        3.4.0
 )
-set(EIGEN_BUILD_TESTING OFF)
-set(EIGEN_BUILD_DOC OFF)
+# Disable Eigen testing and unsupported modules to avoid target conflicts
+set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(eigen3)
+
+# Find the fetched Eigen3
+set(Eigen3_DIR ${eigen3_SOURCE_DIR})
+find_package(Eigen3 REQUIRED)
 
 # Fetch autodiff
 FetchContent_Declare(
@@ -62,13 +67,14 @@ FetchContent_Declare(
     GIT_TAG v1.1.2
 )
 set(AUTODIFF_BUILD_TESTS OFF)
-set(Eigen3_DIR ${eigen3_BINARY_DIR})
+set(AUTODIFF_BUILD_PYTHON OFF)
 FetchContent_MakeAvailable(autodiff)
 
 # Plugin target
 juce_add_plugin(AdaptiveEcho
-    PRODUCT_NAME               "Adaptive Echo"
+    PRODUCT_NAME               "AdaptiveEcho"
     COMPANY_NAME               "Adaptive Echo"                # <- change me
+    BUNDLE_ID                  "org.adaptiveecho.AdaptiveEcho"
     PLUGIN_MANUFACTURER_CODE   AdEc                         # 4 chars
     PLUGIN_CODE                Ae01                         # 4 chars
     FORMATS                    VST3 AU Standalone
@@ -121,6 +127,11 @@ if (ADAPTIVEECHO_ENABLE_LTO)
     if (ipo_supported)
         set_property(TARGET AdaptiveEcho PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
     endif()
+endif()
+
+# GTK includes (after target is created)
+if(UNIX AND NOT APPLE)
+    target_include_directories(AdaptiveEcho SYSTEM PRIVATE ${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
 endif()
 
 if (APPLE)

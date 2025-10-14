@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  plugin:
+    build: .
+    container_name: adaptive-echo
+    ports:
+      - "6080:6080"
+    stdin_open: true
+    tty: true
+    restart: "no"
+    environment:
+      - DISPLAY=:99

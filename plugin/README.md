@@ -76,3 +76,14 @@ clang-format -i src/*.cpp src/*.hpp
 To run the standalone version of the plugin, run the binary you found in `build/AdaptiveEcho_artefacts/Standalone/`.
 
 To run a VST3/AU version of the plugin, you can find the plugin files in `build/AdaptiveEcho_artefacts/VST3/` or `build/AdaptiveEcho_artefacts/AU/`.
+
+## Running in Docker
+
+```bash
+docker compose build
+docker compose up
+```
+
+This will build the CMake project and start a desktop environment in the container. You can access the desktop environment at [http://localhost:6080/vnc_lite.html](http://localhost:6080/vnc_lite.html). The targets are in the `/app` directory.
+
+**Note:** Sound is not supported by the VNC server, so you will not hear any audio with this method.
