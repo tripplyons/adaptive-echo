@@ -4,32 +4,31 @@
 
 typedef unsigned short ushort;
 
-double cosine(const std::vector<double> sounds,
-              const std::vector<double> settings) {
+double cosine(const std::vector<double> &sounds,
+              const std::vector<double> &settings) {
     if (sounds.size() != settings.size()) {
         throw std::runtime_error("Input sizes do not match!");
     }
 
     double sum = 0;
-    ushort N = sounds.size();
+    const ushort N = sounds.size();
     for (ushort i = 0; i < N; i++) {
-        for (ushort j = 0; j < N; j++) {
-            sum += sounds[i] * settings[j];
-        }
+        sum += sounds[i] * settings[i];
     }
     return sum;
 }
 
-double CLIP_Loss(double tau, std::vector<std::vector<double>> sounds,
-                 std::vector<std::vector<double>> settings) {
+double CLIP_Loss(const double tau,
+                 const std::vector<std::vector<double>> &sounds,
+                 const std::vector<std::vector<double>> &settings) {
 
     if (sounds.size() != settings.size()) {
         throw std::runtime_error("Input sizes do not match!");
     }
 
-    ushort N = sounds.size();
+    const ushort N = sounds.size();
 
-    std::vector<std::vector<double>> S(N, std::vector<double>(N));
+    std::vector S(N, std::vector<double>(N));
 
     double sound_to_settings = 0;
     double settings_to_sound = 0;
@@ -56,6 +55,6 @@ double CLIP_Loss(double tau, std::vector<std::vector<double>> sounds,
     sound_to_settings /= -N;
     settings_to_sound /= -N;
 
-    double total_loss = (sound_to_settings + settings_to_sound) / 2;
+    const double total_loss = (sound_to_settings + settings_to_sound) / 2;
     return total_loss;
 }
