@@ -4,8 +4,8 @@
 #include <array>
 #include <vector>
 
-#include "Envelope.hpp"
 #include "Note.hpp"
+#include "PluginEnvelope.hpp"
 #include <memory>
 
 class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
