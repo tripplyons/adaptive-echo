@@ -137,6 +137,11 @@ set(AUTODIFF_BUILD_TESTS OFF)
 set(AUTODIFF_BUILD_PYTHON OFF)
 FetchContent_MakeAvailable(autodiff)
 
+set(COPY_PLUGIN_AFTER_BUILD TRUE)
+if(WIN32)
+    set(COPY_PLUGIN_AFTER_BUILD FALSE)
+endif()
+
 # Plugin target
 juce_add_plugin(AdaptiveEcho
     PRODUCT_NAME               "AdaptiveEcho"
@@ -150,7 +155,7 @@ juce_add_plugin(AdaptiveEcho
     NEEDS_MIDI_OUTPUT          FALSE
     IS_MIDI_EFFECT             FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD    TRUE
+    COPY_PLUGIN_AFTER_BUILD    ${COPY_PLUGIN_AFTER_BUILD}
 )
 
 # Sources
