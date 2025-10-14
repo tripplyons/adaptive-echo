@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-autodiff::var cosine(const std::vector<autodiff::var> &sounds,
+autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
                      const std::vector<autodiff::var> &settings) {
     if (sounds.size() != settings.size()) {
         throw std::runtime_error("Input sizes do not match");
@@ -33,7 +33,7 @@ autodiff::var forward(const autodiff::var &tau,
 
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++) {
-            S[i][j] = cosine(sounds[i], settings[j]);
+            S[i][j] = dotprod(sounds[i], settings[j]);
         }
     }
 
