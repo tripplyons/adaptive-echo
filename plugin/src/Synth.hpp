@@ -3,6 +3,7 @@
 #include "Interpolation.hpp"
 #include "Oscillator.hpp"
 #include "Parameters.hpp"
+#include <iostream>
 
 class Synth {
   public:
@@ -38,7 +39,8 @@ class Synth {
     }
     void simpleTraining(std::vector<float> time, std::vector<float> target,
                         float learningRate, bool printLoss) {
-        SynthesizerParameters gradients = simpleGradient(time, target, printLoss);
+        SynthesizerParameters gradients =
+            simpleGradient(time, target, printLoss);
         std::vector<autodiff::var> gradientsVar = gradients.toVector();
         std::vector<autodiff::var> paramsVar = params.toVector();
 
