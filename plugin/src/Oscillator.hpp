@@ -22,9 +22,9 @@ autodiff::var osc(std::mt19937 &rng, const autodiff::var &time,
 
 // Returns sign of x
 inline autodiff::var sign(const autodiff::var &x) {
-    if (x.val() > 0.0)
+    if (x > 0.0)
         return 1.0;
-    if (x.val() < 0.0)
+    if (x < 0.0)
         return -1.0;
     return 0.0;
 }
@@ -44,13 +44,14 @@ osc(std::mt19937 &rng, const autodiff::var &time, const autodiff::var &freq,
     phase += modulation * fm_amount;
 
     // Wrap phase to the [0, 1) interval
-    phase = fmod(phase, 1.0);
-    if (phase.val() < 0.0) {
+    phase -= int(phase);
+    if (phase < 0.0) {
         phase += 1.0;
     }
 
     // Apply warmth to shape the phase, affecting the waveform's duty cycle
-    phase = 0.5 * (pow(phase, warmth) - pow(1.0 - phase, warmth) + 1.0);
+    autodiff::var inversePhase = 1.0 - phase;
+    phase = 0.5 * (pow(phase, warmth) - pow(inversePhase, warmth) + 1.0);
 
     // Convert phase to radians for sin function
     phase *= 2.0 * M_PI;
@@ -58,7 +59,8 @@ osc(std::mt19937 &rng, const autodiff::var &time, const autodiff::var &freq,
     autodiff::var s = sin(phase);
 
     // Apply harshness and amplitude
-    autodiff::var wave = sign(s) * pow(abs(s), harshness) * amplitude;
+    autodiff::var absS = abs(s);
+    autodiff::var wave = sign(s) * pow(absS, harshness) * amplitude;
 
     // Interpolate between the generated wave and noise
     autodiff::var noise_interp = 0.2 * noise_level;
@@ -82,9 +84,9 @@ inline autodiff::var osc_uniform(
     const autodiff::var &warmth_norm, const autodiff::var &harshness_norm,
     const autodiff::var &amplitude_norm, const autodiff::var &noise_level_norm,
     const autodiff::var &modulation, const autodiff::var &fm_amount) {
-    // Map normalized frequency to a logarithmic scale from 10Hz to 20kHz.
+    // Map normalized frequency to a logarithmic scale from 10Hz to 10kHz.
     const autodiff::var min_freq_semitones = log2(10.0) * 12.0;
-    const autodiff::var max_freq_semitones = log2(20000.0) * 12.0;
+    const autodiff::var max_freq_semitones = log2(10000.0) * 12.0;
     autodiff::var semitones =
         linear_interp(min_freq_semitones, max_freq_semitones, freq_norm);
     autodiff::var freq = pow(2.0, semitones / 12.0);
