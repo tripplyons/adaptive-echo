@@ -88,7 +88,8 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     auto bounds = getLocalBounds().reduced(12);
     midiKeyboard.setBounds(bounds.removeFromBottom(100).reduced(4));
 
-    auto header = bounds.removeFromTop(34);
+    // auto header = bounds.removeFromTop(34);
+    bounds.removeFromTop(34);
     auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
     int sliderWidth = bounds.getWidth() / 5; // one for volume + 4 ADSR

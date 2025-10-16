@@ -115,7 +115,7 @@ list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 FetchContent_Declare(
     eigen3
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-    GIT_TAG        3.4.0
+    GIT_TAG        3.4.1
 )
 # Disable Eigen testing and unsupported modules to avoid target conflicts
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -183,7 +183,6 @@ target_link_libraries(AdaptiveEcho
 # JUCE defines
 target_compile_definitions(AdaptiveEcho
     PRIVATE
-        JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_REPORT_APP_USAGE=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
