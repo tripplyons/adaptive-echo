@@ -1,4 +1,5 @@
 #include "Parameters.hpp"
+#include "Synth.hpp"
 #include <Eigen/Dense>
 #include <autodiff/reverse/var.hpp>
 #include <autodiff/reverse/var/eigen.hpp>
@@ -7,38 +8,35 @@
 
 using namespace autodiff;
 
-autodiff::var forward(autodiff::VectorXvar &params) {
-    std::vector<autodiff::var> paramVec(params.data(),
-                                        params.data() + params.size());
-    SynthesizerParameters synthesizerParams(paramVec);
-    return 1.0 * synthesizerParams.oscillatorA.lowModulation.frequency +
-           2.0 * synthesizerParams.oscillatorB.lowModulation.frequency +
-           3.0 * synthesizerParams.oscillatorA.lowModulation.phaseShift +
-           4.0 * synthesizerParams.oscillatorB.lowModulation.phaseShift;
-}
-
-SynthesizerParameters backward(SynthesizerParameters &params) {
-    autodiff::VectorXvar paramVector = params.toVectorX();
-    autodiff::var y = forward(paramVector);
-    autodiff::VectorXvar gradients = autodiff::gradient(y, paramVector);
-    return SynthesizerParameters(std::vector<autodiff::var>(
-        gradients.data(), gradients.data() + gradients.size()));
-}
-
 int main() {
     SynthesizerParameters params;
     // Set some non-zero values for the parameters we're using
-    params.oscillatorA.lowModulation.frequency = 1.0;
-    params.oscillatorB.lowModulation.frequency = 2.0;
-    params.oscillatorA.lowModulation.phaseShift = 0.5;
-    params.oscillatorB.lowModulation.phaseShift = 1.5;
+    params.oscillatorA.lowModulation.frequency = 0.0;
+    params.oscillatorA.lowModulation.phaseShift = -5.0;
+    params.oscillatorA.lowModulation.noiseLevel = -2.0;
+    params.oscillatorA.lowModulation.warmth = 0.0;
+    params.oscillatorA.lowModulation.harshness = 0.0;
+    params.oscillatorA.lowModulation.amplitude = 1.0;
 
-    SynthesizerParameters gradients = backward(params);
+    double frequencyHertz = sqrt(10.0 * 10000.0);
+    double numSamples = 6;
+    double sampleRate = numSamples * frequencyHertz;
 
-    std::cout << "Gradients: " << gradients.oscillatorA.lowModulation.frequency
-              << ", " << gradients.oscillatorB.lowModulation.frequency << ", "
-              << gradients.oscillatorA.lowModulation.phaseShift << ", "
-              << gradients.oscillatorB.lowModulation.phaseShift << std::endl;
+    std::vector<float> time(numSamples);
+    for (unsigned int i = 0; i < numSamples; i++) {
+        time[i] = i / sampleRate;
+    }
+    std::vector<float> target(time.size());
+    for (unsigned int i = 0; i < time.size(); i++) {
+        target[i] = sin(2.0 * M_PI * frequencyHertz * time[i]);
+    }
+
+    Synth synth(params);
+
+    for (unsigned int i = 0; i < 1000; i++) {
+        bool printLoss = i % 100 == 0;
+        synth.simpleTraining(time, target, 0.01, printLoss);
+    }
 
     return 0;
 }
