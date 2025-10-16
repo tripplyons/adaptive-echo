@@ -1,3 +1,4 @@
+#pragma once
 #include <autodiff/reverse/var.hpp>
 #include <autodiff/reverse/var/eigen.hpp>
 #include <vector>
@@ -124,6 +125,10 @@ class SynthesizerParameters {
         }
     }
 
+    SynthesizerParameters(const autodiff::VectorXvar &vector)
+        : SynthesizerParameters(std::vector<autodiff::var>(
+              vector.data(), vector.data() + vector.size())) {}
+
     std::vector<autodiff::var> toVector() const {
         std::vector<autodiff::var> result = oscillatorA.toVector();
         std::vector<autodiff::var> oscBVec = oscillatorB.toVector();
@@ -148,5 +153,18 @@ class SynthesizerParameters {
             result[i] = vec[i];
         }
         return result;
+    }
+
+    SynthesizerParameters detach() const {
+        std::vector<autodiff::var> vec = toVector();
+        std::vector<double> detachedVec(vec.size());
+        for (size_t i = 0; i < vec.size(); ++i) {
+            detachedVec[i] = double(vec[i]);
+        }
+        std::vector<autodiff::var> detachedVars(detachedVec.size());
+        for (size_t i = 0; i < detachedVec.size(); ++i) {
+            detachedVars[i] = autodiff::var(detachedVec[i]);
+        }
+        return SynthesizerParameters(detachedVars);
     }
 };
