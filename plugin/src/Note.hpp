@@ -1,4 +1,4 @@
-#include "Envelope.hpp"
+#include "PluginEnvelope.hpp"
 
 class Note {
   protected:
