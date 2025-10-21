@@ -3,10 +3,12 @@
 #include <stdexcept>
 #include <vector>
 
-autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
-                      const std::vector<autodiff::var> &settings) {
+using namespace std;
+
+autodiff::var dotprod(const vector<autodiff::var> &sounds,
+                      const vector<autodiff::var> &settings) {
     if (sounds.size() != settings.size()) {
-        throw std::runtime_error("Input sizes do not match");
+        throw runtime_error("Input sizes do not match");
     }
 
     autodiff::var sum = 0;
@@ -18,10 +20,10 @@ autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
 }
 
 autodiff::var forward(const autodiff::var &tau,
-                      const std::vector<std::vector<autodiff::var>> &sounds,
-                      const std::vector<std::vector<autodiff::var>> &settings) {
+                      const vector<vector<autodiff::var>> &sounds,
+                      const vector<vector<autodiff::var>> &settings) {
     if (sounds.size() != settings.size()) {
-        throw std::runtime_error("Input sizes do not match");
+        throw runtime_error("Input sizes do not match");
     }
 
     const int N = sounds.size();

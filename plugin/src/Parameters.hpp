@@ -1,7 +1,10 @@
 #pragma once
 #include <autodiff/reverse/var.hpp>
 #include <autodiff/reverse/var/eigen.hpp>
+#include <iostream>
 #include <vector>
+
+using namespace std;
 
 class EnvelopeParameters {
   public:

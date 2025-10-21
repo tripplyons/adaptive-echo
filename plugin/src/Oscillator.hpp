@@ -3,7 +3,10 @@
 #include <autodiff/reverse/var.hpp>
 
 #include <cmath>
+#include <iostream>
 #include <random>
+
+using namespace std;
 
 // Forward declarations
 autodiff::var osc(std::mt19937 &rng, const autodiff::var &time,
