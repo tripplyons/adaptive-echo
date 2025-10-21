@@ -123,15 +123,14 @@ FetchContent_Declare(
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
     GIT_TAG        3.4.1
 )
-# Disable Eigen testing and unsupported modules to avoid target conflicts
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(eigen3)
 
-# Find the fetched Eigen3
-set(Eigen3_DIR ${eigen3_SOURCE_DIR})
-find_package(Eigen3 REQUIRED)
+if(NOT TARGET Eigen3::Eigen)
+  message(FATAL_ERROR "Eigen3::Eigen target was not created")
+endif()
 
 # Fetch autodiff
 FetchContent_Declare(
@@ -141,7 +140,13 @@ FetchContent_Declare(
 )
 set(AUTODIFF_BUILD_TESTS OFF)
 set(AUTODIFF_BUILD_PYTHON OFF)
-FetchContent_MakeAvailable(autodiff)
+FetchContent_GetProperties(autodiff)
+if(NOT autodiff_POPULATED)
+    FetchContent_Populate(autodiff)
+    add_library(autodiff INTERFACE)
+    target_include_directories(autodiff INTERFACE "${autodiff_SOURCE_DIR}/include")
+    target_link_libraries(autodiff INTERFACE Eigen3::Eigen)
+endif()
 
 set(COPY_PLUGIN_AFTER_BUILD TRUE)
 if(WIN32)

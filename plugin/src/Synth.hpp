@@ -5,6 +5,10 @@
 #include "Parameters.hpp"
 #include <iostream>
 
+// synthesize() takes in autodiff::var time, SynthesizerParameters params
+// output is a value (autodiff::var) 
+// analagous to synth() function in synth.py
+
 class Synth {
   public:
     Synth(SynthesizerParameters params) : params(params) {}
@@ -56,4 +60,58 @@ class Synth {
         params = SynthesizerParameters(newParamsVar);
     }
     SynthesizerParameters params;
+
+    /*
+    SynthesizerParameters:
+        OscillatorParameters oscillatorA;
+        OscillatorParameters oscillatorB;
+        EnvelopeParameters highLowModulation;
+        EnvelopeParameters volumeA;
+        EnvelopeParameters volumeB;
+        EnvelopeParameters fmAmount;
+        autodiff::var startFmAmount;
+        autodiff::var endFmAmount;
+
+    OscillatorParameters:
+        SingleOscillatorParameters lowModulation;
+        SingleOscillatorParameters highModulation;
+
+    SingleOscillatorParameters:
+        autodiff::var frequency;
+        autodiff::var phaseShift;
+        autodiff::var warmth;
+        autodiff::var harshness;
+        autodiff::var amplitude;
+        autodiff::var noiseLevel;
+
+    EnvelopeParameters:
+        autodiff::var length;
+        autodiff::var attack;
+        autodiff::var decay;
+        autodiff::var sustain;
+        autodiff::var release;
+    */
+
+    /*
+    From python synth() args:
+        rng,  # random number generator
+        time,  # time
+        env_vol_a_settings,  # envelope for volume of osc_a
+        env_vol_b_settings,  # envelope for volume of osc_b
+        env_mod_settings,  # envelope for modulation amount
+        osc_a_settings,  # settings for when osc_a is at no modulation
+        osc_b_settings,  # settings for when osc_b is at no modulation
+        osc_a_mod_settings,  # settings for when osc_a is at full modulation
+        osc_b_mod_settings,  # settings for when osc_b is at full modulation
+        env_fm_setting,  # envelope for frequency modulation amount
+        fm_range,  # range of frequency modulation amount
+    */
+   /*
+    autodiff::var synth_sample(const autodiff::var& time, const SynthesizerParameters& params){
+        using autodiff::var;
+
+        // Calculate envelopes
+        
+    }
+        */
 };

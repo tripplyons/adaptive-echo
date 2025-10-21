@@ -1,8 +1,12 @@
 #pragma once
 
+#define _USE_MATH_DEFINES
+#include <cmath>
+
 #include <autodiff/reverse/var.hpp>
 
-#include <cmath>
+
+
 #include <random>
 
 // Forward declarations
