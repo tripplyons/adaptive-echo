@@ -4,7 +4,7 @@
 #include <vector>
 
 autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
-                     const std::vector<autodiff::var> &settings) {
+                      const std::vector<autodiff::var> &settings) {
     if (sounds.size() != settings.size()) {
         throw std::runtime_error("Input sizes do not match");
     }
