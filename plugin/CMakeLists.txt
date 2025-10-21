@@ -84,7 +84,13 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.1)
 endif()
 
-find_package(CURL REQUIRED)
+set(CURL_USE_LIBPSL OFF)
+include(FetchContent)
+FetchContent_Declare(curl
+    URL https://curl.se/download/curl-8.16.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP true
+)
+FetchContent_MakeAvailable(curl)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
