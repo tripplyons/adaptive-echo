@@ -119,3 +119,11 @@ inline autodiff::var osc_uniform(std::mt19937 &rng, const autodiff::var &time,
                        harshness_norm, amplitude_norm, noise_level_norm, 0.0,
                        0.0);
 }
+
+inline autodiff::var osc_params(std::mt19937 &rng, const autodiff::var &time,
+                                const SingleOscillatorParameters &params) {
+    return osc_uniform(rng, time, sigmoid(params.frequency),
+                       sigmoid(params.phaseShift), sigmoid(params.warmth),
+                       sigmoid(params.harshness), sigmoid(params.amplitude),
+                       sigmoid(params.noiseLevel), 0.0, 0.0);
+}
