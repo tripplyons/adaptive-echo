@@ -1,10 +1,18 @@
+#define _USE_MATH_DEFINES
+#include <cmath>
+
 #include "Parameters.hpp"
 #include "Synth.hpp"
+
+
+
 #include <Eigen/Dense>
 #include <autodiff/reverse/var.hpp>
 #include <autodiff/reverse/var/eigen.hpp>
 #include <iostream>
 #include <vector>
+
+
 
 using namespace autodiff;
 
