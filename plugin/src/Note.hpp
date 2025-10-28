@@ -4,23 +4,24 @@ class Note {
   protected:
     int ds; // Samples since envelope segment started
     std::shared_ptr<ADSREnvelope> env;
-    int active_segment;
-    int next_segment_at;
-    float env_sample;
-    float release_level; // Level when release started
+    int currentSegment;
+    int nextSegmentAt;
+    float envSample;
+    float releaseLevel; // Level when release started
     bool expired;
+    bool releaseStarted;
 
   public:
     int num;
 
     Note(int _num, std::shared_ptr<ADSREnvelope> _env)
-        : ds(0), env(_env), active_segment(0), next_segment_at(0),
-          env_sample(0.0f), release_level(1.0f), expired(false), num(_num) {
-        next_segment_at = env->segments[0].lengthSamples;
+        : ds(0), env(_env), currentSegment(0), nextSegmentAt(0),
+          envSample(0.0f), releaseLevel(1.0f), expired(false), num(_num) {
+        nextSegmentAt = env->segments[0].lengthSamples;
     }
 
     Note(int _num) : Note(_num, std::make_shared<ADSREnvelope>()) {}
-    Note() : Note(0) {}
+    Note() : Note(0) { expired = true; }
     Note(const Note &other) = default;
 
     bool is_expired() const { return expired; }
@@ -28,22 +29,31 @@ class Note {
     void set_env(std::shared_ptr<ADSREnvelope> _env) { env = _env; }
 
     void start_release() {
-        active_segment = env->segments.size() - 1;
+        if (env) currentSegment = env->segments.size() - 1;
+        else currentSegment = 0;
         ds = 0;
-        next_segment_at = 0;
-        expired = true;
-        release_level = env_sample;
+        nextSegmentAt = 0;
+        expired = false;
+        releaseStarted = true;
+        releaseLevel = envSample;
+    }
+
+    void reset() {
+        currentSegment = 0;
+        ds = 0;
+        expired = false;
+        releaseLevel = 1.0;
     }
 
     float update_env() {
         ds++;
-        if (next_segment_at != 0 && ds > next_segment_at) {
+        if (nextSegmentAt != 0 && ds > nextSegmentAt) {
             ds = 0;
-            active_segment++;
-            next_segment_at = env->segments[active_segment].lengthSamples;
+            currentSegment++;
+            nextSegmentAt = env->segments[currentSegment].lengthSamples;
         }
-        env_sample = env->get_sample(active_segment, ds) * release_level;
-        return env_sample;
+        envSample = env->get_sample(currentSegment, ds) * releaseLevel;
+        return envSample;
     }
 
     // Peek at the envelope value at a specific segment, ds samples into the
@@ -60,5 +70,34 @@ class Note {
             return env->get_sample(1, dt - env->get_a());
         else
             return env->get_sample(2, 0);
+    }
+
+    void applyEnvelopeToBuffer(juce::AudioBuffer<float>& buffer,
+                               int startSample,
+                               int numSamples) {
+        if (expired || env->segments.size() == 0)
+            return;
+
+        const int numChannels = buffer.getNumChannels();
+
+        for (int i = 0; i < numSamples; ++i) {
+            if (currentSegment >= (int)env->segments.size()) {
+                expired = true;
+                for (int ch = 0; ch < numChannels; ++ch)
+                    buffer.getWritePointer(ch)[startSample + i] = 0.0;
+            }
+
+            envSample = env->segments[currentSegment].fx(ds);
+            if (releaseStarted) envSample *= releaseLevel;
+
+            for (int ch = 0; ch < numChannels; ++ch)
+                buffer.getWritePointer(ch)[startSample + i] *= envSample;
+
+            ds++;
+            if (env->segments[currentSegment].lengthSamples > 0 && ds >= env->segments[currentSegment].lengthSamples) {
+                currentSegment++;
+                ds = 0;
+            }
+        }
     }
 };
