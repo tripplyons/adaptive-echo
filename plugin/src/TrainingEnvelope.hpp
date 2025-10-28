@@ -1,21 +1,20 @@
 #pragma once
 
-#include "Parameters.hpp"
 #include "Interpolation.hpp"
-#include <autodiff/reverse/var.hpp>
+#include "Parameters.hpp"
 #include <algorithm>
+#include <autodiff/reverse/var.hpp>
 
-autodiff::var env(const autodiff::var& time, const autodiff::var& length,
-                  const autodiff::var& attack, const autodiff::var& decay,
-                  const autodiff::var& sustain, const autodiff::var& release);
+autodiff::var env(const autodiff::var &time, const autodiff::var &length,
+                  const autodiff::var &attack, const autodiff::var &decay,
+                  const autodiff::var &sustain, const autodiff::var &release);
 
-autodiff::var env_uniform(const autodiff::var& time,
-                                 const autodiff::var& length_norm,
-                                 const autodiff::var& attack_norm,
-                                 const autodiff::var& decay_norm,
-                                 const autodiff::var& sustain_norm,
-                                 const autodiff::var& release_norm)
-{
+autodiff::var env_uniform(const autodiff::var &time,
+                          const autodiff::var &length_norm,
+                          const autodiff::var &attack_norm,
+                          const autodiff::var &decay_norm,
+                          const autodiff::var &sustain_norm,
+                          const autodiff::var &release_norm) {
     // Remap normalized length from 0.1s to 1.0s (exponentially)
     const autodiff::var length = exp_interp(0.1, 1.0, length_norm);
 
@@ -34,17 +33,16 @@ autodiff::var env_uniform(const autodiff::var& time,
     return env(time, length, attack, decay, sustain, release);
 }
 
-autodiff::var env_uniform(const autodiff::var& time,
-                          const EnvelopeParameters& env_params)
-{
+autodiff::var env_uniform(const autodiff::var &time,
+                          const EnvelopeParameters &env_params) {
     return env_uniform(time, env_params.length, env_params.attack,
-                       env_params.decay, env_params.sustain, env_params.release);
+                       env_params.decay, env_params.sustain,
+                       env_params.release);
 }
 
-autodiff::var env(const autodiff::var& time, const autodiff::var& length,
-                  const autodiff::var& attack, const autodiff::var& decay,
-                  const autodiff::var& sustain, const autodiff::var& release)
-{
+autodiff::var env(const autodiff::var &time, const autodiff::var &length,
+                  const autodiff::var &attack, const autodiff::var &decay,
+                  const autodiff::var &sustain, const autodiff::var &release) {
     // A small epsilon to prevent division by zero in derivatives
     const double epsilon = 1e-9;
     autodiff::var value;
@@ -55,7 +53,7 @@ autodiff::var env(const autodiff::var& time, const autodiff::var& length,
     } else if (time < attack + decay) {
         // Decay phase: linear ramp from 1 to sustain level
         value = 1.0 - (1.0 - sustain) * (time - attack) / (decay + epsilon);
-    } else if (time < length) { 
+    } else if (time < length) {
         // Sustain phase
         value = sustain;
     } else {
