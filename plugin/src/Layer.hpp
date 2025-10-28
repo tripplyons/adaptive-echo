@@ -55,7 +55,7 @@ class Layer {
 
         for (int i = 0; i < node_count; i++) {
 
-            std::vector<autodiff::var> random_vector(node_count);
+            std::vector<autodiff::var> random_vector(input_count);
             for (int j = 0; j < input_count; j++) {
                 random_vector[j] = distribution(generator);
             }
@@ -79,6 +79,10 @@ class Layer {
             result[i] = nodes[i].Output(inputs);
         }
         return result;
+    }
+
+    int get_dimension(){
+        return nodes.size();
     }
 
   private:
