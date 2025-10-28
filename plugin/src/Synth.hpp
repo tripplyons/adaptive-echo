@@ -1,56 +1,62 @@
 #pragma once
 
 #include "Interpolation.hpp"
+#include "Normalization.hpp"
 #include "Oscillator.hpp"
 #include "Parameters.hpp"
 #include "TrainingEnvelope.hpp"
 #include <iostream>
+#include <vector>
+
+using namespace std;
 
 class Synth {
   public:
     Synth(SynthesizerParameters params) : params(params) {}
     ~Synth() {}
-    SynthesizerParameters simpleGradient(std::vector<float> time,
-                                         std::vector<float> target,
-                                         bool printLoss) {
-        std::mt19937 rng(0);
+    vector<double> synthesize(vector<float> time) {
+        mt19937 rng(0);
+        vector<double> output(time.size());
+        for (unsigned int i = 0; i < time.size(); i++) {
+            output[i] = double(osc_params(
+                rng, time[i], params.oscillatorA.lowModulation));
+            params.detach();
+        }
+        return output;
+    }
+    SynthesizerParameters simpleGradient(vector<float> time,
+                                         vector<float> target, bool printLoss) {
+        mt19937 rng(0);
         autodiff::VectorXvar paramsVector = params.toVectorX();
         SynthesizerParameters currentParams(paramsVector);
-        std::vector<autodiff::var> output(time.size());
+        vector<autodiff::var> output(time.size());
         for (unsigned int i = 0; i < time.size(); i++) {
-            output[i] = osc_uniform(
-                rng, time[i],
-                sigmoid(currentParams.oscillatorA.lowModulation.frequency),
-                sigmoid(currentParams.oscillatorA.lowModulation.phaseShift),
-                sigmoid(currentParams.oscillatorA.lowModulation.warmth),
-                sigmoid(currentParams.oscillatorA.lowModulation.harshness),
-                sigmoid(currentParams.oscillatorA.lowModulation.amplitude),
-                sigmoid(currentParams.oscillatorA.lowModulation.noiseLevel),
-                0.0, 0.0);
+            output[i] = osc_params(
+                rng, time[i], currentParams.oscillatorA.lowModulation);
         }
         autodiff::var loss = 0;
         for (unsigned int i = 0; i < time.size(); i++) {
             loss += (output[i] - target[i]) * (output[i] - target[i]);
         }
         if (printLoss) {
-            std::cout << "Loss: " << loss << std::endl;
+            cout << "Loss: " << loss << endl;
         }
         autodiff::VectorXvar gradients = autodiff::gradient(loss, paramsVector);
         return SynthesizerParameters(gradients);
     }
-    void simpleTraining(std::vector<float> time, std::vector<float> target,
+    void simpleTraining(vector<float> time, vector<float> target,
                         float learningRate, bool printLoss) {
         SynthesizerParameters gradients =
             simpleGradient(time, target, printLoss);
-        std::vector<autodiff::var> gradientsVar = gradients.toVector();
-        std::vector<autodiff::var> paramsVar = params.toVector();
+        vector<autodiff::var> gradientsVar = gradients.toVector();
+        vector<autodiff::var> paramsVar = params.toVector();
 
-        std::vector<double> newParams(gradientsVar.size());
+        vector<double> newParams(gradientsVar.size());
         for (unsigned int i = 0; i < gradientsVar.size(); i++) {
             newParams[i] =
                 double(paramsVar[i]) - learningRate * double(gradientsVar[i]);
         }
-        std::vector<autodiff::var> newParamsVar(newParams.size());
+        vector<autodiff::var> newParamsVar(newParams.size());
         for (unsigned int i = 0; i < newParams.size(); i++) {
             newParamsVar[i] = autodiff::var(newParams[i]);
         }

@@ -17,11 +17,11 @@ inline autodiff::var exp_interp(const autodiff::var &a, const autodiff::var &b,
 }
 
 inline autodiff::var sigmoid(const autodiff::var &x) {
-    if (x < -5.0) {
-        return 0.01;
+    if (x < -10.0) {
+        return 0.001;
     }
-    if (x > 5.0) {
-        return 0.99;
+    if (x > 10.0) {
+        return 0.999;
     }
-    return 0.01 + 0.98 / (1.0 + exp(-x));
+    return 0.001 + 0.998 / (1.0 + exp(-x));
 }

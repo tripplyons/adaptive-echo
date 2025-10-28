@@ -4,10 +4,9 @@
 #include <cmath>
 
 #include <autodiff/reverse/var.hpp>
-
-
-
 #include <random>
+
+using namespace std;
 
 // Forward declarations
 autodiff::var osc(std::mt19937 &rng, const autodiff::var &time,
@@ -119,4 +118,12 @@ inline autodiff::var osc_uniform(std::mt19937 &rng, const autodiff::var &time,
     return osc_uniform(rng, time, freq_norm, phase_shift_norm, warmth_norm,
                        harshness_norm, amplitude_norm, noise_level_norm, 0.0,
                        0.0);
+}
+
+inline autodiff::var osc_params(std::mt19937 &rng, const autodiff::var &time,
+                                const SingleOscillatorParameters &params) {
+    return osc_uniform(rng, time, sigmoid(params.frequency),
+                       sigmoid(params.phaseShift), sigmoid(params.warmth),
+                       sigmoid(params.harshness), sigmoid(params.amplitude),
+                       sigmoid(params.noiseLevel), 0.0, 0.0);
 }
