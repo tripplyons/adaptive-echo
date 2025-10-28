@@ -137,19 +137,17 @@ endif()
 
 # Fetch autodiff
 FetchContent_Declare(
-    autodiff
+    autodiff-source
     GIT_REPOSITORY https://github.com/autodiff/autodiff.git
     GIT_TAG v1.1.2
 )
 set(AUTODIFF_BUILD_TESTS OFF)
 set(AUTODIFF_BUILD_PYTHON OFF)
-FetchContent_GetProperties(autodiff)
-if(NOT autodiff_POPULATED)
-    FetchContent_Populate(autodiff)
-    add_library(autodiff INTERFACE)
-    target_include_directories(autodiff INTERFACE "${autodiff_SOURCE_DIR}/include")
-    target_link_libraries(autodiff INTERFACE Eigen3::Eigen)
-endif()
+FetchContent_GetProperties(autodiff-source)
+add_library(autodiff-interface INTERFACE)
+target_link_libraries(autodiff-interface INTERFACE Eigen3::Eigen)
+target_include_directories(autodiff-interface INTERFACE "${autodiff-source_SOURCE_DIR}/include")
+FetchContent_MakeAvailable(autodiff-source)
 
 set(COPY_PLUGIN_AFTER_BUILD TRUE)
 if(WIN32)
