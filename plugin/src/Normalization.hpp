@@ -13,7 +13,7 @@ vector<int32_t> normalize(const vector<double> &x) {
         largestAbs = max(largestAbs, abs(x));
     }
     vector<int32_t> normalized(x.size());
-    for (int i = 0; i < x.size(); i++) {
+    for (size_t i = 0; i < x.size(); i++) {
         normalized[i] = int32_t(x[i] / largestAbs * scale);
     }
     return normalized;
