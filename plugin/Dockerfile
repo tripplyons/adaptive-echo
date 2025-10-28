@@ -19,7 +19,6 @@ RUN apt update && apt install -y \
     libwebkit2gtk-4.1-dev \
     wget \
     unzip \
-    libcurl4-openssl-dev \
     libssl-dev \
     pkg-config \
     git \
