@@ -82,7 +82,11 @@ class Layer {
     }
 
     int get_dimension(){
-        return nodes.size();
+        if(nodes.empty()){
+            return 0;
+        }
+
+        return nodes[0].weights.size();
     }
 
   private:

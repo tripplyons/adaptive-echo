@@ -18,32 +18,38 @@
 
 class Model {
 public:
-    Model(const Layer &input_, const std::vector<Layer> &hidden_layers_, const Layer &output_){
-        input = input_;
+    Model(const std::vector<Layer> &hidden_layers_)
+    {
         hidden_layers = hidden_layers_;
-        output = output_;
 
         num_hidden = hidden_layers.size();
-
-        input_dimension = input.get_dimension();
-        output_dimension = output.get_dimension();
         
         for(int i = 0; i < num_hidden; i++){
             hidden_layer_dimension.push_back(hidden_layers[i].get_dimension());
         }
     }
 
+    std::vector<autodiff::var> get_output(const std::vector<autodiff::var> &input){
 
+        int input_dimension = input.size();
+
+        if(input_dimension != hidden_layer_dimension[0]){
+            throw std::invalid_argument("Input size mismatch (model)");
+        }
+
+        std::vector<autodiff::var> current_output = input;
+
+        for(int i = 0; i < num_hidden; i++){
+            current_output = hidden_layers[i].LayerResult(current_output);
+        }
+
+        return current_output;
+    }
 
 
 private:
-    Layer input;
     std::vector<Layer> hidden_layers;
-    Layer output;
-
     int num_hidden;
-    int input_dimension;
-    int output_dimension;
-    std::vector<int> hidden_layer_dimension; // size num_hidden + 2
+    std::vector<int> hidden_layer_dimension;
 
-}
+};
