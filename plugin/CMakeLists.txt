@@ -101,6 +101,8 @@ if (NOT DEFINED VST3_SDK)
 endif()
 
 # Fetch JUCE 8.0.10
+# Disable web browser support (not needed for this project)
+set(JUCE_WEB_BROWSER 0)
 include(FetchContent)
 FetchContent_Declare(
     juce
