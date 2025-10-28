@@ -85,6 +85,7 @@ if(UNIX AND NOT APPLE)
 endif()
 
 set(CURL_USE_LIBPSL OFF)
+set(USE_NGHTTP2 OFF)
 include(FetchContent)
 FetchContent_Declare(curl
     URL https://curl.se/download/curl-8.16.0.tar.gz
@@ -231,9 +232,10 @@ install(TARGETS AdaptiveEcho
     LIBRARY DESTINATION lib
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
+target_link_options(AdaptiveEcho PRIVATE "LINKER:-as-needed")
+target_link_libraries(AdaptiveEcho PRIVATE CURL::libcurl)
 
-juce_generate_juce_header(${PROJECT_NAME})
+juce_generate_juce_header(AdaptiveEcho)
 
 add_executable(Trainer)
 
