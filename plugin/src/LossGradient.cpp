@@ -1,7 +1,19 @@
 #include <autodiff/reverse/var.hpp>
-#include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <cmath>
+
+std::vector<autodiff::var> normalize(std::vector<autodiff::var> vec) {
+    double total = 0;
+    for (autodiff::var elem : vec) {
+        total += pow((double)elem,2);
+    }
+    autodiff::var norm = sqrt(total);
+    for (autodiff::var elem : vec) {
+        elem /= total;
+    }
+    return vec;
+}
 
 autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
                       const std::vector<autodiff::var> &settings) {
@@ -33,7 +45,7 @@ autodiff::var forward(const autodiff::var &tau,
 
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++) {
-            S[i][j] = dotprod(sounds[i], settings[j]);
+            S[i][j] = dotprod(normalize(sounds[i]), normalize(settings[j]));
         }
     }
 
