@@ -1,10 +1,10 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#include "Normalization.hpp"
 #include "Parameters.hpp"
 #include "Synth.hpp"
 #include "WavHandler.hpp"
-#include "Normalization.hpp"
 
 #include <Eigen/Dense>
 #include <autodiff/reverse/var.hpp>
@@ -58,7 +58,10 @@ int main() {
             targetBatch[j] = target[batchIndices[j]];
         }
         synth.simpleTraining(timeBatch, targetBatch, 0.0003, printLoss, 1);
-        cout << "Iteration " << i << ", frequency: " << params.oscillatorA.lowModulation.frequency << ", phase shift: " << params.oscillatorA.lowModulation.phaseShift << endl;
+        cout << "Iteration " << i
+             << ", frequency: " << params.oscillatorA.lowModulation.frequency
+             << ", phase shift: " << params.oscillatorA.lowModulation.phaseShift
+             << endl;
     }
 
     vector<double> output = synth.synthesize(time);

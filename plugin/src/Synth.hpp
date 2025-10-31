@@ -25,7 +25,7 @@ class Synth {
         return output;
     }
     pair<SynthesizerParameters, double> simpleGradient(vector<double> time,
-                                         vector<double> target) {
+                                                       vector<double> target) {
         mt19937 rng(0);
         autodiff::VectorXvar paramsVector = params.toVectorX();
         SynthesizerParameters currentParams(paramsVector);
@@ -43,7 +43,8 @@ class Synth {
         return make_pair(newParams, double(loss));
     }
     void simpleTraining(vector<double> time, vector<double> target,
-                        float learningRate, bool printLoss, unsigned int gradientBatchSize) {
+                        float learningRate, bool printLoss,
+                        unsigned int gradientBatchSize) {
         vector<double> averageGradients(params.toVector().size());
         double totalLoss = 0.0;
         for (unsigned int i = 0; i < time.size(); i += gradientBatchSize) {
@@ -51,8 +52,10 @@ class Synth {
             if (batchEnd > time.size()) {
                 batchEnd = time.size();
             }
-            vector<double> timeBatch = vector<double>(time.begin() + i, time.begin() + batchEnd);
-            vector<double> targetBatch = vector<double>(target.begin() + i, target.begin() + batchEnd);
+            vector<double> timeBatch =
+                vector<double>(time.begin() + i, time.begin() + batchEnd);
+            vector<double> targetBatch =
+                vector<double>(target.begin() + i, target.begin() + batchEnd);
             pair<SynthesizerParameters, double> result =
                 simpleGradient(timeBatch, targetBatch);
             SynthesizerParameters gradients = result.first;
@@ -72,8 +75,8 @@ class Synth {
         vector<autodiff::var> paramsVar = params.toVector();
         vector<double> newParams(averageGradients.size());
         for (unsigned int i = 0; i < averageGradients.size(); i++) {
-            newParams[i] =
-                double(paramsVar[i]) - learningRate * double(averageGradients[i]);
+            newParams[i] = double(paramsVar[i]) -
+                           learningRate * double(averageGradients[i]);
         }
         vector<autodiff::var> newParamsVar(newParams.size());
         for (unsigned int i = 0; i < newParams.size(); i++) {
