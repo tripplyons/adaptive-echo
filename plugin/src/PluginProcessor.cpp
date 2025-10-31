@@ -5,7 +5,8 @@ AdaptiveEchoAudioProcessor::AdaptiveEchoAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput(
           "Output", juce::AudioChannelSet::stereo(), true)),
       apvts(*this, nullptr, "PARAMS", createParameterLayout()) {
-    volumeSmoothed.reset(currentSampleRate, 0.02); // 20ms smoothing
+    volumeSmoothed.reset(currentSampleRate, 0.002); // 2ms smoothing
+    noteAmpSmoothed.reset(currentSampleRate, 0.002);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
@@ -15,9 +16,19 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "volume", "Volume",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.0f, 1.0f), 0.5f));
+
+    // ADSR
+    juce::NormalisableRange<float> ADSRrange =
+        juce::NormalisableRange<float>(0.1f, 5.0f, 0.01f, 0.3f);
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "freq", "Frequency",
-        juce::NormalisableRange<float>(20.0f, 2000.0f, 0.01f, 0.3f), 440.0f));
+        "attack", "Attack", ADSRrange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "decay", "Decay", ADSRrange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "sustain", "Sustain",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.0f, 1.0f), 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "release", "Release", ADSRrange, 0.5f));
 
     return {params.begin(), params.end()};
 }
@@ -26,17 +37,26 @@ void AdaptiveEchoAudioProcessor::prepareToPlay(double sampleRate,
                                                int /*samplesPerBlock*/) {
     currentSampleRate = sampleRate;
 
-    auto *freqParam = apvts.getRawParameterValue("freq");
-    const double frequency = freqParam != nullptr ? freqParam->load() : 440.0;
-    phaseInc =
-        juce::MathConstants<double>::twoPi * frequency / currentSampleRate;
-
     phase = {0.0, 0.0};
 
     volumeSmoothed.reset(currentSampleRate, 0.02);
-    auto *volParam = apvts.getRawParameterValue("volume");
-    volumeSmoothed.setCurrentAndTargetValue(
-        volParam != nullptr ? volParam->load() : 0.5f);
+    noteAmpSmoothed.reset(currentSampleRate, 0.02);
+
+    if (auto *volParam = apvts.getRawParameterValue("volume"))
+        volumeSmoothed.setCurrentAndTargetValue(volParam->load());
+    else
+        volumeSmoothed.setCurrentAndTargetValue(0.5f);
+
+    noteAmpSmoothed.setCurrentAndTargetValue(0.0f); // start silent
+
+    // ADSR parameters
+    a = d = r = 0.01f;
+    s = 1.0f;
+    ac = dc = rc = 1.0f;
+
+    env = ADSREnvelope(a, d, s, r, ac, dc, rc,
+                       static_cast<int>(currentSampleRate));
+    env_ptr = std::make_shared<ADSREnvelope>(env);
 }
 
 void AdaptiveEchoAudioProcessor::releaseResources() {}
@@ -53,22 +73,66 @@ bool AdaptiveEchoAudioProcessor::isBusesLayoutSupported(
 
 void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                               juce::MidiBuffer &midi) {
-    juce::ignoreUnused(midi);
-
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
-    const int numChans =
-        juce::jmin(2, buffer.getNumChannels()); // we track phase for 2 chans
+    const int numChans = juce::jmin(2, buffer.getNumChannels());
 
-    auto *volParam = apvts.getRawParameterValue("volume");
-    if (volParam != nullptr)
+    // Update envelope params if changed
+    float new_a = a;
+    float new_d = d;
+    float new_s = s;
+    float new_r = r;
+
+    if (auto *aParam = apvts.getRawParameterValue("attack"))
+        new_a = aParam->load();
+    if (auto *dParam = apvts.getRawParameterValue("decay"))
+        new_d = dParam->load();
+    if (auto *sParam = apvts.getRawParameterValue("sustain"))
+        new_s = sParam->load();
+    if (auto *rParam = apvts.getRawParameterValue("release"))
+        new_r = rParam->load();
+
+    // Update ADSR parameters
+    if (new_a != a || new_d != d || new_s != s || new_r != r) {
+        a = new_a;
+        d = new_d;
+        s = new_s;
+        r = new_r;
+        env = ADSREnvelope(a, d, s, r, ac, dc, rc,
+                           static_cast<int>(currentSampleRate));
+        env_ptr = std::make_shared<ADSREnvelope>(env);
+
+        if (activeNote)
+            activeNote->set_env(env_ptr);
+    }
+
+    // Update global volume target
+    if (auto *volParam = apvts.getRawParameterValue("volume"))
         volumeSmoothed.setTargetValue(volParam->load());
 
-    auto *freqParam = apvts.getRawParameterValue("freq");
-    if (freqParam != nullptr) {
-        const double frequency = freqParam->load();
-        phaseInc =
-            juce::MathConstants<double>::twoPi * frequency / currentSampleRate;
+    // Handle MIDI
+    midiState.processNextMidiBuffer(midi, 0, numSamples, true);
+
+    for (const auto metadata : midi) {
+        const auto msg = metadata.getMessage();
+        if (msg.isNoteOn()) {
+            if (!activeNote || activeNote->num != msg.getNoteNumber() ||
+                activeNote->is_expired()) {
+                activeNote =
+                    std::make_shared<Note>(Note(msg.getNoteNumber(), env_ptr));
+            }
+
+            uint8_t vel = (uint8_t)msg.getVelocity();
+            const double frequency =
+                juce::MidiMessage::getMidiNoteInHertz(activeNote->num);
+            phaseInc = juce::MathConstants<double>::twoPi * frequency /
+                       currentSampleRate;
+
+            noteAmpSmoothed.setTargetValue((float)vel / 127.0f);
+        } else if (msg.isNoteOff()) {
+            if (activeNote)
+                activeNote->start_release();
+        }
     }
 
     for (int ch = 0; ch < numChans; ++ch) {
@@ -76,13 +140,23 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         double ph = phase[(size_t)ch];
 
         for (int n = 0; n < numSamples; ++n) {
-            const float amp = volumeSmoothed.getNextValue();
-            const float s = (float)std::sin(ph);
-            out[n] = s * amp;
+            if (activeNote) {
+                float envSample = activeNote->update_env();
 
-            ph += phaseInc;
-            if (ph >= juce::MathConstants<double>::twoPi)
-                ph -= juce::MathConstants<double>::twoPi;
+                float noteLevel = noteAmpSmoothed.getNextValue();
+                float globalVol = volumeSmoothed.getNextValue();
+
+                float amp = noteLevel * envSample * globalVol;
+                out[n] = std::sin(ph) * amp;
+
+                ph += phaseInc;
+                if (ph >= juce::MathConstants<double>::twoPi)
+                    ph -= juce::MathConstants<double>::twoPi;
+            } else {
+                out[n] = 0.0f;
+                (void)volumeSmoothed.getNextValue();
+                (void)noteAmpSmoothed.getNextValue();
+            }
         }
 
         phase[(size_t)ch] = ph;
