@@ -8,14 +8,6 @@
 #include <vector>
 
 
-// input layer
-// list of hidden layers
-// out put layers
-
-// number of dimensions for each layer
-// number of hidden layers
-
-
 class Model {
 public:
     Model(const std::vector<Layer> &hidden_layers_)
@@ -42,7 +34,7 @@ public:
         for(int i = 0; i < num_hidden; i++){
             current_output = hidden_layers[i].LayerResult(current_output);
         }
-
+        
         return current_output;
     }
 
