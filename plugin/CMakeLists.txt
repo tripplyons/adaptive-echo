@@ -84,9 +84,10 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.1)
 endif()
 
+include(FetchContent)
 set(CURL_USE_LIBPSL OFF)
 set(USE_NGHTTP2 OFF)
-include(FetchContent)
+set(BROTLI_FOUND OFF)
 FetchContent_Declare(curl
     URL https://curl.se/download/curl-8.16.0.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP true

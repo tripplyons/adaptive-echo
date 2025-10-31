@@ -4,7 +4,7 @@
 
 using namespace std;
 
-vector<int32_t> normalize(const vector<double> &x) {
+const vector<int32_t> normalize(const vector<double> &x) {
     double headroom = 0.95;
     double maxValue = double(INT32_MAX) * headroom;
     double scale = maxValue * headroom;

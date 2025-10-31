@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstdint>
 #include <fstream>
 #include <string>
@@ -56,7 +58,7 @@ void writeData(const std::string &filename, const std::vector<int32_t> &data,
     writeLittleEndian(file, DataBlocID);
     writeLittleEndian(file, DataSize);
 
-    for (int i = 0; i < data.size(); i++) {
+    for (size_t i = 0; i < data.size(); i++) {
         writeLittleEndian(file, data[i]);
     }
     file.close();

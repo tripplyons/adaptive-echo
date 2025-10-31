@@ -14,7 +14,7 @@ class Synth {
   public:
     Synth(SynthesizerParameters params) : params(params) {}
     ~Synth() {}
-    vector<double> synthesize(vector<float> time) {
+    const vector<double> synthesize(vector<double> time) {
         mt19937 rng(0);
         vector<double> output(time.size());
         for (unsigned int i = 0; i < time.size(); i++) {
@@ -24,8 +24,8 @@ class Synth {
         }
         return output;
     }
-    SynthesizerParameters simpleGradient(vector<float> time,
-                                         vector<float> target, bool printLoss) {
+    pair<SynthesizerParameters, double> simpleGradient(vector<double> time,
+                                         vector<double> target) {
         mt19937 rng(0);
         autodiff::VectorXvar paramsVector = params.toVectorX();
         SynthesizerParameters currentParams(paramsVector);
@@ -38,23 +38,42 @@ class Synth {
         for (unsigned int i = 0; i < time.size(); i++) {
             loss += (output[i] - target[i]) * (output[i] - target[i]);
         }
-        if (printLoss) {
-            cout << "Loss: " << loss << endl;
-        }
         autodiff::VectorXvar gradients = autodiff::gradient(loss, paramsVector);
-        return SynthesizerParameters(gradients);
+        SynthesizerParameters newParams(gradients);
+        return make_pair(newParams, double(loss));
     }
-    void simpleTraining(vector<float> time, vector<float> target,
-                        float learningRate, bool printLoss) {
-        SynthesizerParameters gradients =
-            simpleGradient(time, target, printLoss);
-        vector<autodiff::var> gradientsVar = gradients.toVector();
+    void simpleTraining(vector<double> time, vector<double> target,
+                        float learningRate, bool printLoss, unsigned int gradientBatchSize) {
+        vector<double> averageGradients(params.toVector().size());
+        double totalLoss = 0.0;
+        for (unsigned int i = 0; i < time.size(); i += gradientBatchSize) {
+            unsigned int batchEnd = i + gradientBatchSize;
+            if (batchEnd > time.size()) {
+                batchEnd = time.size();
+            }
+            vector<double> timeBatch = vector<double>(time.begin() + i, time.begin() + batchEnd);
+            vector<double> targetBatch = vector<double>(target.begin() + i, target.begin() + batchEnd);
+            pair<SynthesizerParameters, double> result =
+                simpleGradient(timeBatch, targetBatch);
+            SynthesizerParameters gradients = result.first;
+            double loss = result.second;
+            vector<autodiff::var> gradientsVar = gradients.toVector();
+            for (unsigned int j = 0; j < gradientsVar.size(); j++) {
+                averageGradients[j] += double(gradientsVar[j]);
+            }
+            totalLoss += loss;
+        }
+        if (printLoss) {
+            cout << "Loss: " << totalLoss / time.size() << endl;
+        }
+        for (unsigned int i = 0; i < averageGradients.size(); i++) {
+            averageGradients[i] /= time.size();
+        }
         vector<autodiff::var> paramsVar = params.toVector();
-
-        vector<double> newParams(gradientsVar.size());
-        for (unsigned int i = 0; i < gradientsVar.size(); i++) {
+        vector<double> newParams(averageGradients.size());
+        for (unsigned int i = 0; i < averageGradients.size(); i++) {
             newParams[i] =
-                double(paramsVar[i]) - learningRate * double(gradientsVar[i]);
+                double(paramsVar[i]) - learningRate * double(averageGradients[i]);
         }
         vector<autodiff::var> newParamsVar(newParams.size());
         for (unsigned int i = 0; i < newParams.size(); i++) {
