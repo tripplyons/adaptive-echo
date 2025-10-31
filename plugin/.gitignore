@@ -5,3 +5,6 @@ build
 # Windows builds
 CMakeCache.txt
 CMakeFiles
+
+# audio files
+*.wav
