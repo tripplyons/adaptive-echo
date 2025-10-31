@@ -18,7 +18,7 @@ std::vector<autodiff::var> normalize(std::vector<autodiff::var> vec) {
 autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
                       const std::vector<autodiff::var> &settings) {
     if (sounds.size() != settings.size()) {
-        throw runtime_error("Input sizes do not match");
+        throw std::runtime_error("Input sizes do not match");
     }
 
     autodiff::var sum = 0;
@@ -30,10 +30,10 @@ autodiff::var dotprod(const std::vector<autodiff::var> &sounds,
 }
 
 autodiff::var forward(const autodiff::var &tau,
-                      const vector<vector<autodiff::var>> &sounds,
-                      const vector<vector<autodiff::var>> &settings) {
+                      const std::vector<std::vector<autodiff::var>> &sounds,
+                      const std::vector<std::vector<autodiff::var>> &settings) {
     if (sounds.size() != settings.size()) {
-        throw runtime_error("Input sizes do not match");
+        throw std::runtime_error("Input sizes do not match");
     }
 
     const int N = sounds.size();
