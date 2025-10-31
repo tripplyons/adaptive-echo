@@ -29,8 +29,10 @@ class Note {
     void set_env(std::shared_ptr<ADSREnvelope> _env) { env = _env; }
 
     void start_release() {
-        if (env) currentSegment = env->segments.size() - 1;
-        else currentSegment = 0;
+        if (env)
+            currentSegment = env->segments.size() - 1;
+        else
+            currentSegment = 0;
         ds = 0;
         nextSegmentAt = 0;
         expired = false;
@@ -72,9 +74,8 @@ class Note {
             return env->get_sample(2, 0);
     }
 
-    void applyEnvelopeToBuffer(juce::AudioBuffer<float>& buffer,
-                               int startSample,
-                               int numSamples) {
+    void applyEnvelopeToBuffer(juce::AudioBuffer<float> &buffer,
+                               int startSample, int numSamples) {
         if (expired || env->segments.size() == 0)
             return;
 
@@ -88,13 +89,15 @@ class Note {
             }
 
             envSample = env->segments[currentSegment].fx(ds);
-            if (releaseStarted) envSample *= releaseLevel;
+            if (releaseStarted)
+                envSample *= releaseLevel;
 
             for (int ch = 0; ch < numChannels; ++ch)
                 buffer.getWritePointer(ch)[startSample + i] *= envSample;
 
             ds++;
-            if (env->segments[currentSegment].lengthSamples > 0 && ds >= env->segments[currentSegment].lengthSamples) {
+            if (env->segments[currentSegment].lengthSamples > 0 &&
+                ds >= env->segments[currentSegment].lengthSamples) {
                 currentSegment++;
                 ds = 0;
             }

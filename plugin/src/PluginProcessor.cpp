@@ -115,7 +115,8 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     for (auto metadata : midi) {
         const auto msg = metadata.getMessage();
         if (msg.isNoteOn()) {
-            if (msg.getNoteNumber() != activeNote.num) activeNote.num = msg.getNoteNumber();
+            if (msg.getNoteNumber() != activeNote.num)
+                activeNote.num = msg.getNoteNumber();
             activeNote.reset();
             uint8_t vel = (uint8_t)msg.getVelocity();
             const double frequency =
