@@ -57,6 +57,7 @@ void AdaptiveEchoAudioProcessor::prepareToPlay(double sampleRate,
     env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                        static_cast<int>(currentSampleRate));
     env_ptr = std::make_shared<ADSREnvelope>(env);
+    Note activeNote = Note();
 }
 
 void AdaptiveEchoAudioProcessor::releaseResources() {}
@@ -101,9 +102,7 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                            static_cast<int>(currentSampleRate));
         env_ptr = std::make_shared<ADSREnvelope>(env);
-
-        if (activeNote)
-            activeNote->set_env(env_ptr);
+        activeNote.set_env(env_ptr);
     }
 
     // Update global volume target
@@ -113,25 +112,19 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     // Handle MIDI
     midiState.processNextMidiBuffer(midi, 0, numSamples, true);
 
-    for (const auto metadata : midi) {
+    for (auto metadata : midi) {
         const auto msg = metadata.getMessage();
         if (msg.isNoteOn()) {
-            if (!activeNote || activeNote->num != msg.getNoteNumber() ||
-                activeNote->is_expired()) {
-                activeNote =
-                    std::make_shared<Note>(Note(msg.getNoteNumber(), env_ptr));
-            }
-
+            if (msg.getNoteNumber() != activeNote.num) activeNote.num = msg.getNoteNumber();
+            activeNote.reset();
             uint8_t vel = (uint8_t)msg.getVelocity();
             const double frequency =
-                juce::MidiMessage::getMidiNoteInHertz(activeNote->num);
+                juce::MidiMessage::getMidiNoteInHertz(activeNote.num);
             phaseInc = juce::MathConstants<double>::twoPi * frequency /
                        currentSampleRate;
-
             noteAmpSmoothed.setTargetValue((float)vel / 127.0f);
         } else if (msg.isNoteOff()) {
-            if (activeNote)
-                activeNote->start_release();
+            activeNote.start_release();
         }
     }
 
@@ -140,27 +133,28 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         double ph = phase[(size_t)ch];
 
         for (int n = 0; n < numSamples; ++n) {
-            if (activeNote) {
-                float envSample = activeNote->update_env();
-
+            if (!activeNote.is_expired()) {
                 float noteLevel = noteAmpSmoothed.getNextValue();
                 float globalVol = volumeSmoothed.getNextValue();
 
-                float amp = noteLevel * envSample * globalVol;
+                float amp = noteLevel * globalVol;
                 out[n] = std::sin(ph) * amp;
 
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)
                     ph -= juce::MathConstants<double>::twoPi;
+
+                std::cout << out[n] << std::endl;
             } else {
                 out[n] = 0.0f;
                 (void)volumeSmoothed.getNextValue();
                 (void)noteAmpSmoothed.getNextValue();
             }
         }
-
         phase[(size_t)ch] = ph;
     }
+
+    activeNote.applyEnvelopeToBuffer(buffer, 0, numSamples);
 
     // Clear any extra channels (e.g., if host created more)
     for (int ch = numChans; ch < buffer.getNumChannels(); ++ch)
