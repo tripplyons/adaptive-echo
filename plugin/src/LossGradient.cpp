@@ -1,12 +1,12 @@
 #include <autodiff/reverse/var.hpp>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
-#include <cmath>
 
 std::vector<autodiff::var> normalize(std::vector<autodiff::var> vec) {
     double total = 0;
     for (autodiff::var elem : vec) {
-        total += pow((double)elem,2);
+        total += pow((double)elem, 2);
     }
     autodiff::var norm = sqrt(total);
     for (autodiff::var elem : vec) {

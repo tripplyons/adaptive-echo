@@ -85,12 +85,12 @@ class Layer {
         double rms_total = 0;
         const int N = nodes.size();
         for (autodiff::var input : inputs) {
-            rms_total += pow(((double)input),2);
+            rms_total += pow(((double)input), 2);
         }
-        autodiff::var rms = sqrt(rms_total/N);
+        autodiff::var rms = sqrt(rms_total / N);
         std::vector<autodiff::var> normal(N);
-        for (int i = 0;i<N;i++) {
-            normal[i] = inputs[i]/rms;
+        for (int i = 0; i < N; i++) {
+            normal[i] = inputs[i] / rms;
         }
         std::vector<autodiff::var> result(N);
         for (int i = 0; i < N; i++) {
