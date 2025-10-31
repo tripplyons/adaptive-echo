@@ -2,6 +2,7 @@
 
 #include <autodiff/reverse/var.hpp>
 #include <chrono>
+#include <cmath>
 #include <random>
 #include <vector>
 
@@ -30,7 +31,7 @@ class Node {
 
 class Layer {
   public:
-    explicit Layer(const autodiff::var &node_count) {
+    explicit Layer(const int node_count) {
 
         std::mt19937 generator(
             std::chrono::system_clock::now().time_since_epoch().count());
@@ -46,8 +47,7 @@ class Layer {
             nodes.push_back(Node(random_vector, distribution(generator)));
         }
     }
-    explicit Layer(const autodiff::var &node_count,
-                   const autodiff::var &input_count) {
+    explicit Layer(const int node_count, const int input_count) {
 
         std::mt19937 generator(
             std::chrono::system_clock::now().time_since_epoch().count());
@@ -63,7 +63,7 @@ class Layer {
             nodes.push_back(Node(random_vector, distribution(generator)));
         }
     }
-    explicit Layer(const autodiff::var &node_count,
+    explicit Layer(const int node_count,
                    const std::vector<std::vector<autodiff::var>> &weights,
                    const std::vector<autodiff::var> &biases) {
 
@@ -71,10 +71,28 @@ class Layer {
             nodes.push_back(Node(weights[i], biases[i]));
         }
     }
+    void SetWeights(std::vector<std::vector<autodiff::var>> &weights,
+                    std::vector<autodiff::var> biases) {
+        int index = 0;
+        for (Node node : nodes) {
+            node.weights = weights[index];
+            node.bias = biases[index];
+            index++;
+        }
+    }
     std::vector<autodiff::var>
     LayerResult(const std::vector<autodiff::var> &inputs) const {
-        std::vector<autodiff::var> result(nodes.size());
+        double rms_total = 0;
         const int N = nodes.size();
+        for (autodiff::var input : inputs) {
+            rms_total += pow(((double)input), 2);
+        }
+        autodiff::var rms = sqrt(rms_total / N);
+        std::vector<autodiff::var> normal(N);
+        for (int i = 0; i < N; i++) {
+            normal[i] = inputs[i] / rms;
+        }
+        std::vector<autodiff::var> result(N);
         for (int i = 0; i < N; i++) {
             result[i] = nodes[i].Output(inputs);
         }
