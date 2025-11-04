@@ -123,14 +123,23 @@ list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
 # Fetch Eigen from official repository
 FetchContent_Declare(
-    eigen3
+    Eigen3
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
     GIT_TAG        3.4.1
 )
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(eigen3)
+FetchContent_MakeAvailable(Eigen3)
+FetchContent_GetProperties(Eigen3)
+if(Eigen3_SOURCE_DIR)
+    # Set CMAKE_MODULE_PATH to include Eigen3's cmake directory
+    list(APPEND CMAKE_MODULE_PATH "${Eigen3_SOURCE_DIR}/cmake")
+    # Also set CMAKE_PREFIX_PATH for configuration file discovery
+    list(APPEND CMAKE_PREFIX_PATH "${Eigen3_SOURCE_DIR}")
+else()
+    message(FATAL_ERROR "Eigen3_SOURCE_DIR was not found")
+endif()
 
 if(NOT TARGET Eigen3::Eigen)
   message(FATAL_ERROR "Eigen3::Eigen target was not created")
