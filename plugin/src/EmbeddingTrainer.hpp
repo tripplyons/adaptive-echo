@@ -40,9 +40,25 @@ public:
 
     void train(int num_epochs, const autodiff::var& tau){
         // train sounds and settings matrices
+        for(int epoch = 0; i < num_epochs; epoch++){
+            double curr_loss = train_step(tau)
+
+            // print progress occasionally
+            if(epoch % (num_epochs/10) == 0 || epoch == num_epochs-1){
+                std::cout << "  Epoch " << epoch << "/" << num_epochs 
+                          << ", Loss: " << current_loss << std::endl;
+            }
+        }
     }
 
+    // getters that will return the learned embeddings as double vectors
+    std::vector<std::vector<double>> get_sound_embeddings() const {
+        return get_double_values(sounds);
+    }
 
+    std::vector<std::vector<double>> get_setting_embeddings() const {
+        return get_double_values(settings);
+    }
 
 
 private:
@@ -84,6 +100,20 @@ private:
         }
 
         return autodiff::val(loss);
+    }
+
+    std::vector<std::vector<double>> get_double_values(
+        const std::vector<std::vector<autodiff::var>>& matrix) const
+    {
+        std::vector<std::vector<double>> double_matrix(
+            N, std::vector<double>(embedding_dim));
+        
+        for (int i = 0; i < N; ++i) {
+            for (int j = 0; j < embedding_dim; ++j) {
+                double_matrix[i][j] = autodiff::val(matrix[i][j]);
+            }
+        }
+        return double_matrix;
     }
 
 };
