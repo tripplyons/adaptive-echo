@@ -5,12 +5,18 @@
 
 std::vector<autodiff::var> normalize(std::vector<autodiff::var> vec) {
     autodiff::var total = 0;
-    for (autodiff::var elem : vec) {
+    for (autodiff::var& elem : vec) {
         total += elem * elem;
     }
     autodiff::var norm = sqrt(total);
-    for (autodiff::var elem : vec) {
-        elem /= total;
+
+    // prevent division by 0
+    if(autodiff::val(norm) == 0.0){
+        return vec;
+    }
+
+    for (autodiff::var& elem : vec) {
+        elem /= norm;
     }
     return vec;
 }

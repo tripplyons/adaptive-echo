@@ -9,7 +9,7 @@
 #include <functional>
 #include <iostream>
 
-#include "LossGradient.cpp"
+#include "LossGradient.hpp"
 
 class EmbeddingTrainer {
 public:
@@ -40,8 +40,8 @@ public:
 
     void train(int num_epochs, const autodiff::var& tau){
         // train sounds and settings matrices
-        for(int epoch = 0; i < num_epochs; epoch++){
-            double curr_loss = train_step(tau)
+        for(int epoch = 0; epoch < num_epochs; epoch++){
+            double curr_loss = train_step(tau);
 
             // print progress occasionally
             if(epoch % (num_epochs/10) == 0 || epoch == num_epochs-1){
