@@ -4,9 +4,9 @@
 #include <vector>
 
 std::vector<autodiff::var> normalize(std::vector<autodiff::var> vec) {
-    double total = 0;
+    autodiff::var total = 0;
     for (autodiff::var elem : vec) {
-        total += pow((double)elem, 2);
+        total += elem * elem;
     }
     autodiff::var norm = sqrt(total);
     for (autodiff::var elem : vec) {
