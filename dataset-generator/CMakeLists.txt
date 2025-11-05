@@ -1,24 +1,60 @@
 cmake_minimum_required(VERSION 3.22)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 project(AdaptiveEchoDatasetGenerator
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "Adaptive Echo Dataset Generator"
     LANGUAGES CXX
 )
 
+execute_process(
+    COMMAND where clang++
+    OUTPUT_VARIABLE CLANGXX_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE CLANGXX_RESULT
+)
+
+if(CLANGXX_RESULT EQUAL 0 AND NOT CLANGXX_OUTPUT STREQUAL "")
+    string(REGEX MATCH "^[^\r\n]+" CLANGXX_PATH "${CLANGXX_OUTPUT}")
+    set(CMAKE_CXX_COMPILER ${CLANGXX_PATH} CACHE STRING "" FORCE)
+    message(STATUS "Found CXX compiler: ${CMAKE_CXX_COMPILER}")
+else()
+    message(FATAL_ERROR "clang++ not found via 'where' command - clang++ is required for this build")
+endif()
+
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+set(CURL_USE_LIBPSL OFF)
+set(USE_NGHTTP2 OFF)
+
+set(CURL_DISABLE_DOCS ON CACHE BOOL "" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE) 
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
+FetchContent_Declare(curl
+    URL https://curl.se/download/curl-8.16.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP true
+)
+FetchContent_MakeAvailable(curl)
 
-# -------------------
-# Eigen
-# -------------------
+# Fetch Catch2
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG v3.5.2
+)
+FetchContent_MakeAvailable(Catch2)
+list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
+
+# Fetch Eigen from official repository
 FetchContent_Declare(
     eigen3
     GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-    GIT_TAG 3.4.1
+    GIT_TAG        3.4.1
 )
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
@@ -29,72 +65,28 @@ if(NOT TARGET Eigen3::Eigen)
   message(FATAL_ERROR "Eigen3::Eigen target was not created")
 endif()
 
-# -------------------
-# Autodiff
-# -------------------
+set(AUTODIFF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(AUTODIFF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(AUTODIFF_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+
+# Fetch autodiff
 FetchContent_Declare(
     autodiff-source
     GIT_REPOSITORY https://github.com/autodiff/autodiff.git
     GIT_TAG v1.1.2
 )
-# Disable tests and Python bindings to avoid Catch2 errors
-set(AUTODIFF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(AUTODIFF_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(autodiff-source)
-
-# Interface target for autodiff + Eigen
 add_library(autodiff-interface INTERFACE)
-target_include_directories(autodiff-interface INTERFACE "${autodiff-source_SOURCE_DIR}/include")
+target_include_directories(autodiff-interface INTERFACE "${autodiff-source_SOURCE_DIR}")
 target_link_libraries(autodiff-interface INTERFACE Eigen3::Eigen)
 
-# -------------------
-# Dataset-generator executable
-# -------------------
-add_executable(AdaptiveEcho src/Main.cpp)
+# Add the executable
+add_executable(AdaptiveEchoDatasetGenerator src/Main.cpp)
 
-# Include plugin headers (adjust path if needed)
-target_include_directories(AdaptiveEcho PRIVATE
-    "${CMAKE_SOURCE_DIR}/../plugin/src"
-)
-
-# Link autodiff + Eigen
-target_link_libraries(AdaptiveEcho PRIVATE autodiff-interface)
-
-# -------------------
 # Warnings
-# -------------------
-if(MSVC)
-    target_compile_options(AdaptiveEcho PRIVATE /W4 /permissive- /EHsc)
-else()
-    target_compile_options(AdaptiveEcho PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+target_compile_options(AdaptiveEchoDatasetGenerator PRIVATE -Wall -Wextra -Wpedantic)
 
-# -------------------
-# LTO (Release)
-# -------------------
-if (ADAPTIVEECHO_ENABLE_LTO)
-    include(CheckIPOSupported)
-    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_err)
-    if (ipo_supported)
-        set_property(TARGET AdaptiveEcho PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-    endif()
-endif()
-
-# -------------------
-# macOS bundle ID
-# -------------------
-if (APPLE)
-    set(BUNDLE_ID "org.adaptiveecho.AdaptiveEcho")
-    set_target_properties(AdaptiveEcho PROPERTIES
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${BUNDLE_ID}"
-    )
-endif()
-
-# -------------------
-# Install targets
-# -------------------
-install(TARGETS AdaptiveEcho
-    RUNTIME DESTINATION bin
-    BUNDLE  DESTINATION .
-    LIBRARY DESTINATION lib
+target_link_libraries(AdaptiveEchoDatasetGenerator PRIVATE 
+    CURL::libcurl
+    autodiff-interface
 )

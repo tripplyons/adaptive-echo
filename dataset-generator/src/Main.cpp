@@ -8,9 +8,9 @@
 #include "../../plugin/src/Oscillator.hpp"
 void runProgram(int numFiles, char *outputPath, int nThreads);
 double** initializeCsv(char* outputPath, int numFiles);
-void generateAllFiles(char *outputPath, double **weightArr, int weightArrLen, int rowLen, int nThreads);
-void generateFilesForThread(char *outputPath, double **weightArr, int weightArrLen, int rowLen, int threadNum, int nThreads);
-void generateFile(char *outputPath, double* weights, int rowLen);
+void generateAllFiles(char *outputPath, double **weightArr, int weightArrLen, int nThreads);
+void generateFilesForThread(char *outputPath, double **weightArr, int weightArrLen, int threadNum, int nThreads);
+void generateFile(const char *outputPath, double* weights);
 
 // Runs on startup, self explanatory
 // Many checks to see if args are valid, and then calls rest of code
@@ -30,10 +30,10 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("Argument less than or equal to 0");
             }
         } catch (const std::exception &e) {
-            std::cout << "Usage: argument 1,3,4 must be a positive integer" << std::endl;
+            std::cout << "Usage: argument 1,3 must be a positive integer" << std::endl;
             return -1;
         }
-        runProgram(std::stoi(argv[1]), argv[2], std::stoi(argv[4]));
+        runProgram(std::stoi(argv[1]), argv[2], std::stoi(argv[3]));
         return 0;
     // A general catch all to avoid ugly popup on uncaught error. Blanket catch all
     } catch (const std::exception &e) {
@@ -54,7 +54,6 @@ void runProgram(int numFiles, char *outputPath, int nThreads) {
 // Creates a 2d array of doubles
 // Each row is is the list of values associated with
 double** initializeCsv(char* outputPath, int numFiles) {
-
     // Sets up random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -68,7 +67,7 @@ double** initializeCsv(char* outputPath, int numFiles) {
             weightArr[i][j] = dist(gen);
         }
     }
-    std::ofstream ofs(outputPath);
+    std::ofstream ofs(string(outputPath) + string("data.csv"));
     for (int i = 0; i < numFiles; i++) {
         ofs << "file" << (i+1) << ".wav";
         for (int j = 0; j < 8; j++) {
@@ -81,35 +80,43 @@ double** initializeCsv(char* outputPath, int numFiles) {
 }
 // ------------------ FILE GENERATION BELOW --------------------------
 // Create individual file with given settings
-void generateFile(char *outputPath, double* weights, int rowLen) {
+void generateFile(const char *outputPath, double* weights) {
     double maxTime = 5;
     int sampleRate = 44100;
     double timeInterval = 1.0 / sampleRate;
-    double nSamples = maxTime * sampleRate;
-    vector<uint32_t>* data = new double[(int)nSamples];
+    int nSamples = maxTime * sampleRate;
+    vector<int32_t>* data = new vector<int32_t>();
+    (*data).reserve(nSamples);
     // Add samples in order by time
+    std::mt19937 rng(std::random_device{}());
     for (int i=0; i<nSamples; i++) {
-        (*data).push_back(osc_uniform(std::mt19937(), i * timeInterval, weights[0],
-            weights[1], weights[2], weights[3], weights[4], weights[5], weights[6], weights[7]));
+        var time = i * timeInterval;
+        var w0 = weights[0]; var w1 = weights[1]; var w2 = weights[2];
+        var w3 = weights[3]; var w4 = weights[4]; var w5 = weights[5];
+        var w6 = weights[6]; var w7 = weights[7];
+        double sample = val(osc_uniform(rng,time,w0,w1,w2,w3,w4,w5,w6,w7));
+        double clipped = clamp(sample, -1.0, 1.0);
+        int32_t sampleConverted = static_cast<int32_t>(clipped * static_cast<double>(std::numeric_limits<int32_t>::max()));
+        (*data).push_back(sampleConverted);
     }
     // Write data to file and free memory
-    writeData(outputPath, data, sampleRate);
-    free(data);
+    writeData(string(outputPath), *data, sampleRate);
+    delete data;
 }
 // Executes file generation for files assigned to a specific thread
-void generateFilesForThread(char* outputPath, double** weightArr, int weightArrLen, int rowLen, int threadNum, int nThreads) {
+void generateFilesForThread(char* outputPath, double** weightArr, int weightArrLen, int threadNum, int nThreads) {
     for (int i = threadNum; i < weightArrLen; i+=nThreads) {
         std::string output = "Working on item: " + std::to_string(i + 1) + '\n';
         std::cout << output << std::flush;
-        generateFile(outputPath, weightArr[i], rowLen);
+        generateFile((string(outputPath) + string("file") + std::to_string(i+1)+string(".wav")).c_str(), weightArr[i]);
     }
 }
 // Manages which threads generate which files
-void generateAllFiles(char* outputPath, double** weightArr, int weightArrLen, int rowLen, int nThreads) {
+void generateAllFiles(char* outputPath, double** weightArr, int weightArrLen, int nThreads) {
     std::thread* threads = new std::thread[nThreads];
     for (int i = 0; i < nThreads; i++) {
         threads[i] = std::thread([=]() {
-            generateFilesForThread(outputPath, weightArr, weightArrLen, rowLen, i, nThreads);
+            generateFilesForThread(outputPath, weightArr, weightArrLen, i, nThreads);
         });
     }
     for (int i = 0; i < nThreads; i++) {
