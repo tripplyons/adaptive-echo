@@ -15,5 +15,11 @@ uv sync
 ## Generating Graphs
 
 ```bash
-uv run python src/adaptive_echo_python/generate_graphs.py
+uv run python src/adaptive_echo_python/export_graphs.py
+```
+
+## Formatting
+
+```bash
+./format.sh
 ```
