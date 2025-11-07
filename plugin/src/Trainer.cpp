@@ -1,72 +1,76 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
-#include "Normalization.hpp"
-#include "Parameters.hpp"
-#include "Synth.hpp"
 #include "WavHandler.hpp"
 
-#include <Eigen/Dense>
-#include <autodiff/reverse/var.hpp>
-#include <autodiff/reverse/var/eigen.hpp>
 #include <iostream>
+#include <torch/script.h>
+#include <torch/torch.h>
 #include <vector>
 
-using namespace autodiff;
-
 int main() {
-    SynthesizerParameters params;
-    // Set some non-zero values for the parameters we're using
-    params.oscillatorA.lowModulation.frequency = 0.0;
-    params.oscillatorA.lowModulation.phaseShift = 2.0;
-    params.oscillatorA.lowModulation.noiseLevel = 0.0;
-    params.oscillatorA.lowModulation.warmth = 0.0;
-    params.oscillatorA.lowModulation.harshness = 0.0;
-    params.oscillatorA.lowModulation.amplitude = 3.0;
+    try {
+        // Load the TorchScript model (exported as .pt for C++ compatibility)
+        // Path relative to where the Trainer executable is run from
+        std::string model_path =
+            "../adaptive_echo_python/graphs/audio_encoder.pt";
 
-    double frequencyHertz = sqrt(10.0 * 10000.0);
-    unsigned int numSamples = 48000;
-    unsigned int batchSize = 16;
-    double sampleRate = 48000;
+        std::cout << "Loading model from: " << model_path << std::endl;
 
-    vector<double> time(numSamples);
-    for (unsigned int i = 0; i < numSamples; i++) {
-        time[i] = i / sampleRate;
-    }
-    vector<double> target(time.size());
-    for (unsigned int i = 0; i < time.size(); i++) {
-        target[i] = sin(2.0 * M_PI * frequencyHertz * time[i]);
-    }
-
-    writeData("target.wav", normalize(target), sampleRate);
-
-    Synth synth(params);
-
-    vector<double> initialOutput = synth.synthesize(time);
-    writeData("initial_output.wav", normalize(initialOutput), sampleRate);
-
-    for (unsigned int i = 0; i < 100; i++) {
-        bool printLoss = i % 100 == 0;
-        vector<unsigned int> batchIndices = vector<unsigned int>(numSamples);
-        for (unsigned int i = 0; i < numSamples; i++) {
-            batchIndices[i] = rand() % numSamples;
+        // Load the TorchScript module
+        torch::jit::Module module;
+        try {
+            module = torch::jit::load(model_path);
+        } catch (const c10::Error &e) {
+            std::cerr << "Error loading model: " << e.what() << std::endl;
+            std::cerr << "Make sure you've run export_graphs.py to generate "
+                         "the .pt file"
+                      << std::endl;
+            return 1;
         }
-        vector<double> timeBatch(batchSize);
-        vector<double> targetBatch(batchSize);
-        for (unsigned int j = 0; j < batchSize; j++) {
-            timeBatch[j] = time[batchIndices[j]];
-            targetBatch[j] = target[batchIndices[j]];
+
+        module.eval(); // Set to evaluation mode
+
+        std::cout << "Model loaded successfully!" << std::endl;
+
+        // Create a sample input tensor matching the export shape: (1, 48000 *
+        // 5) Note: The Encoder model uses nn.Embedding, which expects integer
+        // indices Input should be integers in range [0,
+        // audio_encoder_input_size)
+        int64_t audio_encoder_input_size = 48000 * 5; // 5 seconds at 48kHz
+        auto input = torch::randn({1, audio_encoder_input_size});
+
+        std::cout << "Input tensor shape: [" << input.sizes()[0] << ", "
+                  << input.sizes()[1] << "]" << std::endl;
+        std::cout << "Input tensor dtype: " << input.dtype() << std::endl;
+
+        // Run inference
+        std::vector<torch::jit::IValue> inputs;
+        inputs.push_back(input);
+
+        auto output = module.forward(inputs);
+
+        std::cout << "Model inference completed!" << std::endl;
+
+        // Print output information if it's a tensor
+        if (output.isTensor()) {
+            auto output_tensor = output.toTensor();
+            std::cout << "Output tensor shape: [";
+            for (size_t i = 0; i < output_tensor.sizes().size(); ++i) {
+                std::cout << output_tensor.sizes()[i];
+                if (i < output_tensor.sizes().size() - 1) {
+                    std::cout << ", ";
+                }
+            }
+            std::cout << "]" << std::endl;
+            std::cout << "Output tensor dtype: " << output_tensor.dtype()
+                      << std::endl;
         }
-        synth.simpleTraining(timeBatch, targetBatch, 0.0003, printLoss, 1);
-        cout << "Iteration " << i
-             << ", frequency: " << params.oscillatorA.lowModulation.frequency
-             << ", phase shift: " << params.oscillatorA.lowModulation.phaseShift
-             << endl;
+
+    } catch (const std::exception &e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+        return 1;
     }
-
-    vector<double> output = synth.synthesize(time);
-
-    writeData("output.wav", normalize(output), sampleRate);
 
     return 0;
 }
