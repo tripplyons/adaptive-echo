@@ -1,0 +1,17 @@
+[project]
+name = "adaptive-echo-python"
+version = "0.1.0"
+description = "Python definitions for Adaptive Echo"
+readme = "README.md"
+authors = [
+    { name = "Tripp Lyons", email = "tripplyons@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.3.4",
+    "torch>=2.9.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
