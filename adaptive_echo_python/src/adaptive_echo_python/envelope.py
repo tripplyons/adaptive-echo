@@ -1,5 +1,5 @@
 import torch
-from interpolation import linear_interp, exp_interp
+from interpolation import exp_interp, linear_interp
 
 
 # envolope generator
@@ -9,9 +9,8 @@ def env(
     attack: torch.Tensor,
     decay: torch.Tensor,
     sustain: torch.Tensor,
-    release: torch.Tensor
+    release: torch.Tensor,
 ) -> torch.Tensor:
-    
     value = torch.where(
         time < attack,
         time / attack,
@@ -19,15 +18,14 @@ def env(
             time < attack + decay,
             1.0 - (1.0 - sustain) * (time - attack) / decay,
             torch.where(
-                time < length - release,
-                sustain,
-                sustain * (length - time) / release
+                time < length - release, sustain, sustain * (length - time) / release
             ),
         ),
     )
 
     value = torch.clamp(value, min=0.0, max=1.0)
     return value
+
 
 # use envelope generator with inputs from 0 to 1
 def env_uniform(
@@ -36,9 +34,8 @@ def env_uniform(
     attack: torch.Tensor,
     decay: torch.Tensor,
     sustain: torch.Tensor,
-    release: torch.Tensor
+    release: torch.Tensor,
 ) -> torch.Tesnor:
-    
     min_length = 0.1
     max_length = 1.0
     length = exp_interp(min_length, max_length, length)

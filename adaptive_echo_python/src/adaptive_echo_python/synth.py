@@ -2,7 +2,7 @@ import torch
 from envelope import env, env_uniform
 from oscillator import osc, osc_uniform
 
-'''
+"""
 # synthesize a single sample at a time
 def synth(
     rng,  # random number generator
@@ -67,4 +67,4 @@ synth_parallel = jax.vmap(
 
 def synth(
 )
-'''
+"""
