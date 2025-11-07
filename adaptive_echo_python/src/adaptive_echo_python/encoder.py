@@ -1,6 +1,5 @@
 import torch.nn as nn
 
-
 class EncoderLayer(nn.Module):
     def __init__(self, hidden_size, num_heads):
         super(EncoderLayer, self).__init__()
