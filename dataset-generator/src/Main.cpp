@@ -62,7 +62,9 @@ double** initializeCsv(char* outputPath, int numFiles) {
     double** weightArr = new double *[numFiles];
     for (int i = 0; i < numFiles; i++) {
         weightArr[i] = new double[8];
-        for (int j = 0; j < 8; j++) {
+        // WeightArr[0] is frequency, so set to this specific number for 440hz
+        weightArr[i][0] = 0.547817558829;
+        for (int j = 1; j < 8; j++) {
             // Random weights across the matrix
             weightArr[i][j] = dist(gen);
         }
@@ -85,7 +87,7 @@ void generateFile(const char *outputPath, double* weights) {
     int sampleRate = 44100;
     double timeInterval = 1.0 / sampleRate;
     int nSamples = maxTime * sampleRate;
-    vector<int32_t>* data = new vector<int32_t>();
+    vector<double>* data = new vector<double>();
     (*data).reserve(nSamples);
     // Add samples in order by time
     std::mt19937 rng(std::random_device{}());
@@ -96,12 +98,29 @@ void generateFile(const char *outputPath, double* weights) {
         var w6 = weights[6]; var w7 = weights[7];
         double sample = val(osc_uniform(rng,time,w0,w1,w2,w3,w4,w5,w6,w7));
         double clipped = clamp(sample, -1.0, 1.0);
-        int32_t sampleConverted = static_cast<int32_t>(clipped * static_cast<double>(std::numeric_limits<int32_t>::max()));
-        (*data).push_back(sampleConverted);
+        (*data).push_back(clipped);
     }
-    // Write data to file and free memory
-    writeData(string(outputPath), *data, sampleRate);
+    // Volume is also normalized alongside frequency
+    // Find max absolute value for normalization
+    double maxAbs = 0.0;
+    for (int i = 0; i < nSamples; i++) {
+        if (std::abs((*data)[i]) > maxAbs)
+            maxAbs = std::abs((*data)[i]);
+    }
+    if (maxAbs < 1e-12) maxAbs = 1.0;
+    vector<int32_t> *normalizedData = new vector<int32_t>();
+    (*normalizedData).reserve(nSamples);
+    for (int i = 0; i < nSamples; i++) {
+        double normalized =
+            (*data)[i] / maxAbs * 0.99; // scale to 99% of full amplitude
+        int32_t sampleConverted = static_cast<int32_t>(
+            normalized *
+            static_cast<double>(std::numeric_limits<int32_t>::max()));
+        (*normalizedData).push_back(sampleConverted);
+    }
+    writeData(string(outputPath), *normalizedData, sampleRate);
     delete data;
+    delete normalizedData;
 }
 // Executes file generation for files assigned to a specific thread
 void generateFilesForThread(char* outputPath, double** weightArr, int weightArrLen, int threadNum, int nThreads) {
