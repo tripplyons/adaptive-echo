@@ -23,3 +23,9 @@ uv run python src/adaptive_echo_python/export_graphs.py
 ```bash
 ./format.sh
 ```
+
+## Run Tests
+
+```bash
+./test.sh
+```
