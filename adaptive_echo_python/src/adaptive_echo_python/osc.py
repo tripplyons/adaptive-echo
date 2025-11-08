@@ -27,7 +27,7 @@ def osc(
     # amount of frequency modulation
     fm_amount: torch.Tensor | None = None,
 ):
-    noise = torch.randn(time.shape, dtype=time.dtype, device=time.device) * 0.2
+    noise = torch.randn(time.shape, dtype=time.dtype, device=time.device) * 0.5
 
     phase = time * freq + phase_shift
     if modulation is not None and fm_amount is not None:
@@ -42,7 +42,7 @@ def osc(
 
     wave = torch.sign(sin) * torch.abs(sin) ** harshness * amplitude
 
-    noise_interp = 0.2 * noise_level
+    noise_interp = 0.1 * noise_level
 
     return linear_interp(wave, noise, noise_interp)
 
@@ -58,8 +58,8 @@ def osc_uniform(
     modulation: torch.Tensor | None = None,
     fm_amount: torch.Tensor | None = None,
 ):
-    min_freq = math.log2(20.0) * 12
-    max_freq = math.log2(5000.0) * 12
+    min_freq = math.log2(50.0) * 12
+    max_freq = math.log2(2000.0) * 12
     semitones = linear_interp(min_freq, max_freq, freq)
     freq = 2 ** (semitones / 12)
 

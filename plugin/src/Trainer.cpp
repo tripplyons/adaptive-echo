@@ -1,23 +1,19 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#include "Normalization.hpp"
 #include "WavHandler.hpp"
 
 #include <iostream>
+#include <sstream>
 #include <torch/script.h>
 #include <torch/torch.h>
 #include <vector>
 
 int main() {
     try {
-        // Load the TorchScript model (exported as .pt for C++ compatibility)
-        // Path relative to where the Trainer executable is run from
-        std::string model_path =
-            "../adaptive_echo_python/graphs/audio_encoder.pt";
+        std::string model_path = "../adaptive_echo_python/graphs/synth.pt";
 
-        std::cout << "Loading model from: " << model_path << std::endl;
-
-        // Load the TorchScript module
         torch::jit::Module module;
         try {
             module = torch::jit::load(model_path);
@@ -29,42 +25,84 @@ int main() {
             return 1;
         }
 
-        module.eval(); // Set to evaluation mode
+        module.eval();
 
-        std::cout << "Model loaded successfully!" << std::endl;
+        for (const auto &pair : module.named_parameters()) {
+            const std::string &name = pair.name;
+            torch::Tensor param = pair.value;
 
-        // Create a sample input tensor matching the export shape: (1, 48000 *
-        // 5) Note: The Encoder model uses nn.Embedding, which expects integer
-        // indices Input should be integers in range [0,
-        // audio_encoder_input_size)
-        int64_t audio_encoder_input_size = 48000 * 5; // 5 seconds at 48kHz
-        auto input = torch::randn({1, audio_encoder_input_size});
+            auto random_param = torch::randn_like(param).detach();
+            random_param.set_requires_grad(false);
 
-        std::cout << "Input tensor shape: [" << input.sizes()[0] << ", "
-                  << input.sizes()[1] << "]" << std::endl;
-        std::cout << "Input tensor dtype: " << input.dtype() << std::endl;
+            std::istringstream name_stream(name);
+            std::string segment;
+            std::vector<std::string> path_parts;
 
-        // Run inference
+            while (std::getline(name_stream, segment, '.')) {
+                path_parts.push_back(segment);
+            }
+
+            torch::jit::Module current_module = module;
+            for (size_t i = 0; i < path_parts.size() - 1; ++i) {
+                current_module = current_module.attr(path_parts[i]).toModule();
+            }
+
+            current_module.setattr(path_parts.back(), random_param);
+        }
+
+        int64_t sample_rate = 48000;
+        double duration = 5.0;
+        int64_t num_samples = static_cast<int64_t>(sample_rate * duration);
+
+        auto time_values = torch::linspace(0.0, duration, num_samples);
+        auto input = time_values.unsqueeze(0);
+
         std::vector<torch::jit::IValue> inputs;
         inputs.push_back(input);
 
         auto output = module.forward(inputs);
 
-        std::cout << "Model inference completed!" << std::endl;
-
-        // Print output information if it's a tensor
         if (output.isTensor()) {
             auto output_tensor = output.toTensor();
-            std::cout << "Output tensor shape: [";
-            for (size_t i = 0; i < output_tensor.sizes().size(); ++i) {
-                std::cout << output_tensor.sizes()[i];
-                if (i < output_tensor.sizes().size() - 1) {
-                    std::cout << ", ";
-                }
+
+            auto has_nan = torch::isnan(output_tensor).any().item<bool>();
+            auto has_inf = torch::isinf(output_tensor).any().item<bool>();
+            if (has_nan) {
+                std::cerr << "Warning: Output contains NaN values!"
+                          << std::endl;
             }
-            std::cout << "]" << std::endl;
-            std::cout << "Output tensor dtype: " << output_tensor.dtype()
-                      << std::endl;
+            if (has_inf) {
+                std::cerr << "Warning: Output contains Inf values!"
+                          << std::endl;
+            }
+
+            auto output_cpu = output_tensor.cpu().contiguous();
+
+            torch::Tensor output_1d;
+            if (output_cpu.dim() == 2 && output_cpu.size(0) == 1) {
+                output_1d = output_cpu[0];
+            } else if (output_cpu.dim() == 1) {
+                output_1d = output_cpu;
+            } else {
+                output_1d = output_cpu.flatten();
+            }
+
+            auto output_double = output_1d.to(torch::kFloat64);
+            int64_t actual_num_samples = output_double.size(0);
+
+            std::vector<double> audio_data;
+            audio_data.reserve(actual_num_samples);
+
+            auto output_ptr = output_double.data_ptr<double>();
+            for (int64_t i = 0; i < actual_num_samples; ++i) {
+                audio_data.push_back(output_ptr[i]);
+            }
+
+            std::vector<int32_t> normalized_data = normalize(audio_data);
+
+            std::string output_filename = "output.wav";
+            writeData(output_filename, normalized_data, sample_rate);
+            std::cout << "Successfully wrote WAV file to " << output_filename << "!" << std::endl;
         }
 
     } catch (const std::exception &e) {
