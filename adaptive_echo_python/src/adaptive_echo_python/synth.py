@@ -28,8 +28,8 @@ class Synth(nn.Module):
         # Interpolate oscillator settings based on modulation envelope
         # For osc_a: interpolate between osc_a (no modulation) and osc_a_mod (full modulation)
         # Calculate frequency modulation amount
-        min_fm = torch.tensor(0.005, dtype=time.dtype, device=time.device)
-        max_fm = torch.tensor(0.5, dtype=time.dtype, device=time.device)
+        min_fm = 0.005
+        max_fm = 0.5
         start_fm = exp_interp(min_fm, max_fm, self.fm_range_low)
         end_fm = exp_interp(min_fm, max_fm, self.fm_range_high)
         fm_amount = linear_interp(start_fm, end_fm, env_fm)
@@ -45,3 +45,19 @@ class Synth(nn.Module):
 
         # Add them together
         return osc_a_output + osc_b_output
+
+    def encode_settings(self) -> torch.Tensor:
+        # convert all parameters to a single flattened tensor
+        params = torch.cat(
+            [
+                self.env_vol_a.encode_settings(),
+                self.env_vol_b.encode_settings(),
+                self.env_mod.encode_settings(),
+                self.osc_a.encode_settings(),
+                self.osc_b.encode_settings(),
+                self.env_fm.encode_settings(),
+                self.fm_range_low.view((1,)),
+                self.fm_range_high.view((1,)),
+            ]
+        )
+        return params

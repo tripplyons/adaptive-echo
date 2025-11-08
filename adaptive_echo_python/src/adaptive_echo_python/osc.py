@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 
@@ -56,27 +58,25 @@ def osc_uniform(
     modulation: torch.Tensor | None = None,
     fm_amount: torch.Tensor | None = None,
 ):
-    min_freq = torch.log2(torch.tensor(20.0, dtype=time.dtype, device=time.device)) * 12
-    max_freq = (
-        torch.log2(torch.tensor(5000.0, dtype=time.dtype, device=time.device)) * 12
-    )
+    min_freq = math.log2(20.0) * 12
+    max_freq = math.log2(5000.0) * 12
     semitones = linear_interp(min_freq, max_freq, freq)
     freq = 2 ** (semitones / 12)
 
-    min_phase_shift = torch.tensor(0, dtype=time.dtype, device=time.device)
-    max_phase_shift = torch.tensor(1, dtype=time.dtype, device=time.device)
+    min_phase_shift = 0
+    max_phase_shift = 1
     phase_shift = linear_interp(min_phase_shift, max_phase_shift, phase_shift)
 
-    min_warmth = torch.tensor(1 / 5, dtype=time.dtype, device=time.device)
-    max_warmth = torch.tensor(5, dtype=time.dtype, device=time.device)
+    min_warmth = 1 / 5
+    max_warmth = 5
     warmth = exp_interp(min_warmth, max_warmth, warmth)
 
-    min_harshness = torch.tensor(1 / 5, dtype=time.dtype, device=time.device)
-    max_harshness = torch.tensor(5, dtype=time.dtype, device=time.device)
+    min_harshness = 1 / 5
+    max_harshness = 5
     harshness = exp_interp(min_harshness, max_harshness, harshness)
 
-    min_amplitude = torch.tensor(0.1, dtype=time.dtype, device=time.device)
-    max_amplitude = torch.tensor(1, dtype=time.dtype, device=time.device)
+    min_amplitude = 0.1
+    max_amplitude = 1
     amplitude = linear_interp(min_amplitude, max_amplitude, amplitude)
 
     return osc(
@@ -125,4 +125,22 @@ class OscillatorModulatedUniform(nn.Module):
             linear_interp(self.low_noise_level, self.high_noise_level, low_high_interp),
             modulation=modulation,
             fm_amount=fm_amount,
+        )
+
+    def encode_settings(self) -> torch.Tensor:
+        return torch.cat(
+            [
+                self.low_freq.view((1,)),
+                self.high_freq.view((1,)),
+                self.low_phase_shift.view((1,)),
+                self.high_phase_shift.view((1,)),
+                self.low_warmth.view((1,)),
+                self.high_warmth.view((1,)),
+                self.low_harshness.view((1,)),
+                self.high_harshness.view((1,)),
+                self.low_amplitude.view((1,)),
+                self.high_amplitude.view((1,)),
+                self.low_noise_level.view((1,)),
+                self.high_noise_level.view((1,)),
+            ]
         )
