@@ -20,12 +20,13 @@ def env(
             time < attack + decay,
             1.0 - (1.0 - sustain) * (time - attack) / decay,
             torch.where(
-                time < length - release, sustain, sustain * (length - time) / release
+                time < length - release,
+                sustain,
+                torch.where(time < length, sustain * (length - time) / release, 0),
             ),
         ),
     )
 
-    value = torch.clamp(value, min=0.0, max=1.0)
     return value
 
 
@@ -38,8 +39,8 @@ def env_uniform(
     sustain: torch.Tensor,
     release: torch.Tensor,
 ) -> torch.Tensor:
-    min_length = 0.1
-    max_length = 1.0
+    min_length = 0.5
+    max_length = 5.0
     length = exp_interp(min_length, max_length, length)
 
     min_attack = 0.05
