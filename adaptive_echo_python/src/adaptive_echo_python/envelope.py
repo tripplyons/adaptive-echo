@@ -1,5 +1,7 @@
 import torch
-from interpolation import exp_interp, linear_interp
+import torch.nn as nn
+
+from adaptive_echo_python.interpolation import exp_interp, linear_interp
 
 
 # envolope generator
@@ -35,25 +37,40 @@ def env_uniform(
     decay: torch.Tensor,
     sustain: torch.Tensor,
     release: torch.Tensor,
-) -> torch.Tesnor:
-    min_length = 0.1
-    max_length = 1.0
+) -> torch.Tensor:
+    min_length = torch.tensor(0.1, dtype=time.dtype, device=time.device)
+    max_length = torch.tensor(1.0, dtype=time.dtype, device=time.device)
     length = exp_interp(min_length, max_length, length)
 
-    min_attack = 0.05
-    max_attack = 0.5
+    min_attack = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_attack = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     attack = exp_interp(min_attack, max_attack, attack)
 
-    min_decay = 0.05
-    max_decay = 0.5
+    min_decay = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_decay = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     decay = exp_interp(min_decay, max_decay, decay)
 
-    min_sustain = 0.1
-    max_sustain = 1.0
+    min_sustain = torch.tensor(0.1, dtype=time.dtype, device=time.device)
+    max_sustain = torch.tensor(1.0, dtype=time.dtype, device=time.device)
     sustain = linear_interp(min_sustain, max_sustain, sustain)
 
-    min_release = 0.05
-    max_release = 0.5
+    min_release = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_release = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     release = exp_interp(min_release, max_release, release)
 
     return env(time, length, attack, decay, sustain, release)
+
+
+class EnvelopeUniform(nn.Module):
+    def __init__(self):
+        super(EnvelopeUniform, self).__init__()
+        self.length = nn.Parameter(torch.tensor(0.0))
+        self.attack = nn.Parameter(torch.tensor(0.0))
+        self.decay = nn.Parameter(torch.tensor(0.0))
+        self.sustain = nn.Parameter(torch.tensor(0.0))
+        self.release = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, time: torch.Tensor) -> torch.Tensor:
+        return env_uniform(
+            time, self.length, self.attack, self.decay, self.sustain, self.release
+        )
