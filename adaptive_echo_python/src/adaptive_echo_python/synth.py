@@ -46,6 +46,7 @@ class Synth(nn.Module):
         # Add them together
         return osc_a_output + osc_b_output
 
+    @torch.jit.export
     def encode_settings(self) -> torch.Tensor:
         # convert all parameters to a single flattened tensor
         params = torch.cat(

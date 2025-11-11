@@ -79,10 +79,12 @@ def osc_uniform(
     modulation: torch.Tensor | None = None,
     fm_amount: torch.Tensor | None = None,
 ):
-    min_freq = math.log2(50.0) * 12
-    max_freq = math.log2(2000.0) * 12
+    min_freq = torch.tensor(math.log2(50.0) * 12, dtype=time.dtype, device=time.device)
+    max_freq = torch.tensor(
+        math.log2(2000.0) * 12, dtype=time.dtype, device=time.device
+    )
     semitones = linear_interp(min_freq, max_freq, freq)
-    freq = 2 ** (semitones / 12)
+    freq = torch.pow(2.0, semitones / 12.0)
 
     min_phase_shift = torch.tensor(0, dtype=time.dtype, device=time.device)
     max_phase_shift = torch.tensor(1.0, dtype=time.dtype, device=time.device)

@@ -32,6 +32,7 @@ class TwoEncoders(nn.Module):
 
         return audio_embedding, settings_embedding
 
+    @torch.jit.export
     def loss(self, audio_input, settings_input):
         audio_embedding, settings_embedding = self.forward(audio_input, settings_input)
 
