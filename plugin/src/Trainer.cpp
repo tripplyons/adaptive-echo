@@ -29,6 +29,15 @@ int main() {
         times[i] = i / (float)sample_rate;
     }
 
+    torch::Tensor settings = synth.encodeSettings();
+    vector<float> settingsVector(settings.data_ptr<float>(),
+                                 settings.data_ptr<float>() + settings.numel());
+    std::cout << "Initial Settings: " << settingsVector.size() << std::endl;
+    for (size_t i = 0; i < settingsVector.size(); i++) {
+        std::cout << settingsVector[i] << " ";
+    }
+    std::cout << std::endl;
+
     vector<float> targets = synth2.generate(times);
     vector<double> targetsDouble(targets.begin(), targets.end());
     vector<int32_t> targetsInt = normalize(targetsDouble);
@@ -49,5 +58,6 @@ int main() {
     vector<double> finalOutputDouble(finalOutput.begin(), finalOutput.end());
     vector<int32_t> finalOutputInt = normalize(finalOutputDouble);
     writeData("final_output.wav", finalOutputInt, sample_rate);
+
     return 0;
 }
