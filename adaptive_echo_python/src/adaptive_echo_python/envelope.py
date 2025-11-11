@@ -63,6 +63,12 @@ def env_uniform(
 
 
 class EnvelopeUniform(nn.Module):
+    length: nn.Parameter
+    attack: nn.Parameter
+    decay: nn.Parameter
+    sustain: nn.Parameter
+    release: nn.Parameter
+
     def __init__(self):
         super(EnvelopeUniform, self).__init__()
         self.length = nn.Parameter(torch.tensor(0.0))
@@ -86,3 +92,10 @@ class EnvelopeUniform(nn.Module):
                 self.release.view((1,)),
             ]
         )
+
+    def decode_settings(self, settings_input: torch.Tensor):
+        self.length.data.copy_(settings_input[0])
+        self.attack.data.copy_(settings_input[1])
+        self.decay.data.copy_(settings_input[2])
+        self.sustain.data.copy_(settings_input[3])
+        self.release.data.copy_(settings_input[4])

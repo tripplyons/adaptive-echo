@@ -80,7 +80,9 @@ def osc_uniform(
     fm_amount: torch.Tensor | None = None,
 ):
     min_freq = torch.log2(torch.tensor(50.0, dtype=time.dtype, device=time.device)) * 12
-    max_freq = torch.log2(torch.tensor(2000.0, dtype=time.dtype, device=time.device)) * 12
+    max_freq = (
+        torch.log2(torch.tensor(2000.0, dtype=time.dtype, device=time.device)) * 12
+    )
     semitones = linear_interp(min_freq, max_freq, freq)
     freq = torch.pow(2.0, semitones / 12.0)
 
@@ -114,6 +116,19 @@ def osc_uniform(
 
 
 class OscillatorModulatedUniform(nn.Module):
+    low_freq: nn.Parameter
+    high_freq: nn.Parameter
+    low_phase_shift: nn.Parameter
+    high_phase_shift: nn.Parameter
+    low_warmth: nn.Parameter
+    high_warmth: nn.Parameter
+    low_harshness: nn.Parameter
+    high_harshness: nn.Parameter
+    low_amplitude: nn.Parameter
+    high_amplitude: nn.Parameter
+    low_noise_level: nn.Parameter
+    high_noise_level: nn.Parameter
+
     def __init__(self):
         super(OscillatorModulatedUniform, self).__init__()
         self.low_freq = nn.Parameter(torch.tensor(0.0))
@@ -165,3 +180,17 @@ class OscillatorModulatedUniform(nn.Module):
                 self.high_noise_level.view((1,)),
             ]
         )
+
+    def decode_settings(self, settings_input: torch.Tensor):
+        self.low_freq.data.copy_(settings_input[0])
+        self.high_freq.data.copy_(settings_input[1])
+        self.low_phase_shift.data.copy_(settings_input[2])
+        self.high_phase_shift.data.copy_(settings_input[3])
+        self.low_warmth.data.copy_(settings_input[4])
+        self.high_warmth.data.copy_(settings_input[5])
+        self.low_harshness.data.copy_(settings_input[6])
+        self.high_harshness.data.copy_(settings_input[7])
+        self.low_amplitude.data.copy_(settings_input[8])
+        self.high_amplitude.data.copy_(settings_input[9])
+        self.low_noise_level.data.copy_(settings_input[10])
+        self.high_noise_level.data.copy_(settings_input[11])

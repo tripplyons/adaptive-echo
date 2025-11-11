@@ -19,7 +19,6 @@ class Synth {
     void randomizeParameters() {
         for (const auto &pair : torchModule.named_parameters()) {
             auto randomParam = torch::randn_like(pair.value).detach();
-            randomParam.set_requires_grad(false);
             setNestedAttribute(pair.name, randomParam);
         }
     }
@@ -42,6 +41,10 @@ class Synth {
 
     torch::Tensor encodeSettings() {
         return torchModule.get_method("encode_settings")({}).toTensor();
+    }
+
+    void decodeSettings(torch::Tensor settingsInput) {
+        torchModule.get_method("decode_settings")({settingsInput});
     }
 
     vector<float> generate(vector<float> times) {

@@ -15,9 +15,7 @@
 int main() {
     std::cout << "Starting trainer" << std::endl;
 
-    std::string model_path = "two_encoders.pt";
-
-    TwoEncoders twoEncoders(model_path);
+    TwoEncoders twoEncoders("two_encoders.pt");
     twoEncoders.train(100, 0.0003f, 1000, true);
 
     return 0;
