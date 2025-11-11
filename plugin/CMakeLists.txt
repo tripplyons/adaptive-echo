@@ -227,3 +227,10 @@ target_sources(Trainer PRIVATE src/Trainer.cpp)
 target_link_libraries(Trainer PRIVATE ${TORCH_LIBRARIES})
 target_include_directories(Trainer PRIVATE ${TORCH_INCLUDE_DIRS})
 target_compile_options(Trainer PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(DatasetGenerator)
+
+target_sources(DatasetGenerator PRIVATE src/DatasetGenerator.cpp)
+target_link_libraries(DatasetGenerator PRIVATE ${TORCH_LIBRARIES})
+target_include_directories(DatasetGenerator PRIVATE ${TORCH_INCLUDE_DIRS})
+target_compile_options(DatasetGenerator PRIVATE -Wall -Wextra -Wpedantic)
