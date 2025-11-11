@@ -28,8 +28,8 @@ class Synth(nn.Module):
         # Interpolate oscillator settings based on modulation envelope
         # For osc_a: interpolate between osc_a (no modulation) and osc_a_mod (full modulation)
         # Calculate frequency modulation amount
-        min_fm = 0.005
-        max_fm = 0.5
+        min_fm = torch.tensor(0.001, dtype=time.dtype, device=time.device)
+        max_fm = torch.tensor(0.1, dtype=time.dtype, device=time.device)
         start_fm = exp_interp(min_fm, max_fm, self.fm_range_low)
         end_fm = exp_interp(min_fm, max_fm, self.fm_range_high)
         fm_amount = linear_interp(start_fm, end_fm, env_fm)

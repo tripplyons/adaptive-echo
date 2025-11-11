@@ -39,24 +39,24 @@ def env_uniform(
     sustain: torch.Tensor,
     release: torch.Tensor,
 ) -> torch.Tensor:
-    min_length = 0.5
-    max_length = 5.0
+    min_length = torch.tensor(0.5, dtype=time.dtype, device=time.device)
+    max_length = torch.tensor(5.0, dtype=time.dtype, device=time.device)
     length = exp_interp(min_length, max_length, length)
 
-    min_attack = 0.05
-    max_attack = 0.5
+    min_attack = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_attack = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     attack = exp_interp(min_attack, max_attack, attack)
 
-    min_decay = 0.05
-    max_decay = 0.5
+    min_decay = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_decay = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     decay = exp_interp(min_decay, max_decay, decay)
 
-    min_sustain = 0.1
-    max_sustain = 1.0
+    min_sustain = torch.tensor(0.1, dtype=time.dtype, device=time.device)
+    max_sustain = torch.tensor(1.0, dtype=time.dtype, device=time.device)
     sustain = linear_interp(min_sustain, max_sustain, sustain)
 
-    min_release = 0.05
-    max_release = 0.5
+    min_release = torch.tensor(0.05, dtype=time.dtype, device=time.device)
+    max_release = torch.tensor(0.5, dtype=time.dtype, device=time.device)
     release = exp_interp(min_release, max_release, release)
 
     return env(time, length, attack, decay, sustain, release)
