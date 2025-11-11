@@ -4,6 +4,7 @@
 #include "Normalization.hpp"
 #include "Synth.hpp"
 #include "WavHandler.hpp"
+#include "TwoEncoders.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -14,50 +15,10 @@
 int main() {
     std::cout << "Starting trainer" << std::endl;
 
-    std::string model_path = "../adaptive_echo_python/graphs/synth.pt";
+    std::string model_path = "two_encoders.pt";
 
-    Synth synth(model_path);
-    synth.randomizeParameters();
-
-    Synth synth2(synth);
-    synth2.randomizeParameters();
-
-    unsigned int sample_rate = 48000;
-    unsigned int num_samples = sample_rate * 5;
-    vector<float> times(num_samples);
-    for (unsigned int i = 0; i < num_samples; i++) {
-        times[i] = i / (float)sample_rate;
-    }
-
-    torch::Tensor settings = synth.encodeSettings();
-    vector<float> settingsVector(settings.data_ptr<float>(),
-                                 settings.data_ptr<float>() + settings.numel());
-    std::cout << "Initial Settings: " << settingsVector.size() << std::endl;
-    for (size_t i = 0; i < settingsVector.size(); i++) {
-        std::cout << settingsVector[i] << " ";
-    }
-    std::cout << std::endl;
-
-    vector<float> targets = synth2.generate(times);
-    vector<double> targetsDouble(targets.begin(), targets.end());
-    vector<int32_t> targetsInt = normalize(targetsDouble);
-    writeData("target.wav", targetsInt, sample_rate);
-
-    vector<float> initialOutput = synth.generate(times);
-    vector<double> initialOutputDouble(initialOutput.begin(),
-                                       initialOutput.end());
-    vector<int32_t> initialOutputInt = normalize(initialOutputDouble);
-    writeData("initial_output.wav", initialOutputInt, sample_rate);
-
-    std::cout << "Starting training" << std::endl;
-
-    float loss = synth.simpleTrain(times, targets, 0.01f, 100, true);
-    std::cout << "Loss: " << loss << std::endl;
-
-    vector<float> finalOutput = synth.generate(times);
-    vector<double> finalOutputDouble(finalOutput.begin(), finalOutput.end());
-    vector<int32_t> finalOutputInt = normalize(finalOutputDouble);
-    writeData("final_output.wav", finalOutputInt, sample_rate);
+    TwoEncoders twoEncoders(model_path);
+    twoEncoders.train(100, 0.0003f, 1000, true);
 
     return 0;
 }

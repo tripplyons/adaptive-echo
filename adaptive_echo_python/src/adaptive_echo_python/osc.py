@@ -1,4 +1,4 @@
-import math
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -23,9 +23,9 @@ def osc(
     # amount of noise
     noise_level: torch.Tensor,
     # signal for frequency modulation
-    modulation: torch.Tensor | None = None,
+    modulation: Optional[torch.Tensor] = None,
     # amount of frequency modulation
-    fm_amount: torch.Tensor | None = None,
+    fm_amount: Optional[torch.Tensor] = None,
 ):
     EPSILON = 1e-6
 
@@ -79,10 +79,8 @@ def osc_uniform(
     modulation: torch.Tensor | None = None,
     fm_amount: torch.Tensor | None = None,
 ):
-    min_freq = torch.tensor(math.log2(50.0) * 12, dtype=time.dtype, device=time.device)
-    max_freq = torch.tensor(
-        math.log2(2000.0) * 12, dtype=time.dtype, device=time.device
-    )
+    min_freq = torch.log2(torch.tensor(50.0, dtype=time.dtype, device=time.device)) * 12
+    max_freq = torch.log2(torch.tensor(2000.0, dtype=time.dtype, device=time.device)) * 12
     semitones = linear_interp(min_freq, max_freq, freq)
     freq = torch.pow(2.0, semitones / 12.0)
 
@@ -135,8 +133,8 @@ class OscillatorModulatedUniform(nn.Module):
         self,
         time: torch.Tensor,
         low_high_interp: torch.Tensor,
-        modulation=None,
-        fm_amount=None,
+        modulation: Optional[torch.Tensor] = None,
+        fm_amount: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         return osc_uniform(
             time,
