@@ -18,11 +18,9 @@ class Synth {
 
     void randomizeParameters() {
         for (const auto &pair : torchModule.named_parameters()) {
-            const std::string &name = pair.name;
-            torch::Tensor param = pair.value;
-            auto randomParam = torch::randn_like(param).detach();
+            auto randomParam = torch::randn_like(pair.value).detach();
             randomParam.set_requires_grad(false);
-            setNestedAttribute(name, randomParam);
+            setNestedAttribute(pair.name, randomParam);
         }
     }
 
@@ -35,11 +33,15 @@ class Synth {
     }
 
     float getParameter(string name) {
-        return torchModule.attr(name).toTensor().item<float>();
+        return getNestedAttribute(name).item<float>();
     }
 
     void setParameter(string name, float value) {
         setNestedAttribute(name, torch::tensor(value));
+    }
+
+    torch::Tensor encodeSettings() {
+        return torchModule.get_method("encode_settings")({}).toTensor();
     }
 
     vector<float> generate(vector<float> times) {
@@ -120,6 +122,23 @@ class Synth {
     }
 
   private:
+    torch::Tensor getNestedAttribute(const std::string &name) {
+        std::istringstream name_stream(name);
+        std::string segment;
+        std::vector<std::string> path_parts;
+
+        while (std::getline(name_stream, segment, '.')) {
+            path_parts.push_back(segment);
+        }
+
+        torch::jit::Module current_module = torchModule;
+        for (size_t i = 0; i < path_parts.size() - 1; ++i) {
+            current_module = current_module.attr(path_parts[i]).toModule();
+        }
+
+        return current_module.attr(path_parts.back()).toTensor();
+    }
+
     void setNestedAttribute(const std::string &name,
                             const torch::Tensor &value) {
         std::istringstream name_stream(name);
