@@ -1,150 +1,158 @@
 #pragma once
 
-#include "Interpolation.hpp"
-#include "Normalization.hpp"
-#include "Oscillator.hpp"
-#include "Parameters.hpp"
-#include "TrainingEnvelope.hpp"
 #include <iostream>
+#include <sstream>
+#include <torch/optim.h>
+#include <torch/script.h>
 #include <vector>
 
 using namespace std;
 
 class Synth {
   public:
-    Synth(SynthesizerParameters params) : params(params) {}
+    Synth(string modelPath) : torchModule(torch::jit::load(modelPath)) {
+        torchModule.eval();
+    }
     ~Synth() {}
-    const vector<double> synthesize(vector<double> time) {
-        mt19937 rng(0);
-        vector<double> output(time.size());
-        for (unsigned int i = 0; i < time.size(); i++) {
-            output[i] = double(
-                osc_params(rng, time[i], params.oscillatorA.lowModulation));
-            params.detach();
+    Synth(const Synth &other) { torchModule = other.torchModule.clone(); }
+
+    void randomizeParameters() {
+        for (const auto &pair : torchModule.named_parameters()) {
+            const std::string &name = pair.name;
+            torch::Tensor param = pair.value;
+            auto randomParam = torch::randn_like(param).detach();
+            randomParam.set_requires_grad(false);
+            setNestedAttribute(name, randomParam);
         }
-        return output;
     }
-    pair<SynthesizerParameters, double> simpleGradient(vector<double> time,
-                                                       vector<double> target) {
-        mt19937 rng(0);
-        autodiff::VectorXvar paramsVector = params.toVectorX();
-        SynthesizerParameters currentParams(paramsVector);
-        vector<autodiff::var> output(time.size());
-        for (unsigned int i = 0; i < time.size(); i++) {
-            output[i] = osc_params(rng, time[i],
-                                   currentParams.oscillatorA.lowModulation);
+
+    vector<string> getParameterNames() {
+        vector<string> names;
+        for (const auto &pair : torchModule.named_parameters()) {
+            names.push_back(pair.name);
         }
-        autodiff::var loss = 0;
-        for (unsigned int i = 0; i < time.size(); i++) {
-            loss += (output[i] - target[i]) * (output[i] - target[i]);
-        }
-        autodiff::VectorXvar gradients = autodiff::gradient(loss, paramsVector);
-        SynthesizerParameters newParams(gradients);
-        return make_pair(newParams, double(loss));
+        return names;
     }
-    void simpleTraining(vector<double> time, vector<double> target,
-                        float learningRate, bool printLoss,
-                        unsigned int gradientBatchSize) {
-        vector<double> averageGradients(params.toVector().size());
-        double totalLoss = 0.0;
-        for (unsigned int i = 0; i < time.size(); i += gradientBatchSize) {
-            unsigned int batchEnd = i + gradientBatchSize;
-            if (batchEnd > time.size()) {
-                batchEnd = time.size();
+
+    float getParameter(string name) {
+        return torchModule.attr(name).toTensor().item<float>();
+    }
+
+    void setParameter(string name, float value) {
+        setNestedAttribute(name, torch::tensor(value));
+    }
+
+    vector<float> generate(vector<float> times) {
+        torchModule.eval();
+        int64_t numSamples = static_cast<int64_t>(times.size());
+        torch::Tensor input =
+            torch::from_blob(times.data(), {numSamples},
+                             torch::TensorOptions().dtype(torch::kFloat32));
+        input = input.unsqueeze(0);
+
+        auto output = torchModule.forward({input});
+        if (!output.isTensor()) {
+            throw std::runtime_error("Model output is not a tensor");
+        }
+        auto output_tensor = output.toTensor();
+        auto output_cpu = output_tensor.cpu().contiguous().squeeze(0);
+
+        auto output_float = output_cpu.to(torch::kFloat32);
+
+        auto output_ptr = output_float.data_ptr<float>();
+        int64_t size = output_float.size(0);
+        return vector<float>(output_ptr, output_ptr + size);
+    }
+
+    float simpleTrain(vector<float> times, vector<float> &targets,
+                      float learningRate = 0.0003f, int numEpochs = 1000,
+                      bool log = false) {
+        torchModule.train();
+
+        vector<torch::Tensor> parameters;
+        for (const auto &pair : torchModule.named_parameters()) {
+            parameters.push_back(pair.value);
+        }
+        torch::optim::OptimizerParamGroup paramGroup(parameters);
+        torch::optim::AdamW optimizer(
+            parameters, torch::optim::AdamWOptions().lr(learningRate));
+
+        setRequiresGrad(true);
+
+        int64_t numSamples = static_cast<int64_t>(times.size());
+        torch::Tensor input =
+            torch::from_blob(times.data(), {numSamples},
+                             torch::TensorOptions().dtype(torch::kFloat32));
+        input = input.unsqueeze(0);
+        int64_t numTargets = static_cast<int64_t>(targets.size());
+        torch::Tensor target =
+            torch::from_blob(targets.data(), {numTargets},
+                             torch::TensorOptions().dtype(torch::kFloat32));
+        target = target.unsqueeze(0);
+
+        float lossValue = 0;
+        for (int epoch = 0; epoch < numEpochs; epoch++) {
+            auto output = torchModule.forward({input});
+            auto output_tensor = output.toTensor();
+
+            auto loss = torch::mse_loss(output_tensor, target);
+            lossValue = loss.item<float>();
+
+            if (log) {
+                std::cout << "Epoch " << epoch << " loss: " << lossValue
+                          << std::endl;
             }
-            vector<double> timeBatch =
-                vector<double>(time.begin() + i, time.begin() + batchEnd);
-            vector<double> targetBatch =
-                vector<double>(target.begin() + i, target.begin() + batchEnd);
-            pair<SynthesizerParameters, double> result =
-                simpleGradient(timeBatch, targetBatch);
-            SynthesizerParameters gradients = result.first;
-            double loss = result.second;
-            vector<autodiff::var> gradientsVar = gradients.toVector();
-            for (unsigned int j = 0; j < gradientsVar.size(); j++) {
-                averageGradients[j] += double(gradientsVar[j]);
+
+            if (!std::isfinite(lossValue)) {
+                std::cerr << "ERROR: Loss is NaN/Inf at epoch " << epoch
+                          << std::endl;
+                break;
             }
-            totalLoss += loss;
-        }
-        if (printLoss) {
-            cout << "Loss: " << totalLoss / time.size() << endl;
-        }
-        for (unsigned int i = 0; i < averageGradients.size(); i++) {
-            averageGradients[i] /= time.size();
-        }
-        vector<autodiff::var> paramsVar = params.toVector();
-        vector<double> newParams(averageGradients.size());
-        for (unsigned int i = 0; i < averageGradients.size(); i++) {
-            newParams[i] = double(paramsVar[i]) -
-                           learningRate * double(averageGradients[i]);
-        }
-        vector<autodiff::var> newParamsVar(newParams.size());
-        for (unsigned int i = 0; i < newParams.size(); i++) {
-            newParamsVar[i] = autodiff::var(newParams[i]);
-        }
-        params = SynthesizerParameters(newParamsVar);
-    }
-    SynthesizerParameters params;
 
-    // Helper for synth_sample
-    SingleOscillatorParameters
-    single_osc_linear_interp(const SingleOscillatorParameters &a,
-                             const SingleOscillatorParameters &b,
-                             const autodiff::var &t) {
-        SingleOscillatorParameters result;
-        result.frequency = linear_interp(a.frequency, b.frequency, t);
-        result.phaseShift = linear_interp(a.phaseShift, b.phaseShift, t);
-        result.warmth = linear_interp(a.warmth, b.warmth, t);
-        result.harshness = linear_interp(a.harshness, b.harshness, t);
-        result.amplitude = linear_interp(a.amplitude, b.amplitude, t);
-        result.noiseLevel = linear_interp(a.noiseLevel, b.noiseLevel, t);
-        return result;
+            zeroGrad();
+
+            loss.backward();
+
+            optimizer.step();
+        }
+
+        return lossValue;
     }
 
-    // Helper for synth_sample
-    autodiff::var single_osc_uniform(std::mt19937 &rng, const var &time,
-                                     const SingleOscillatorParameters &params,
-                                     const var &modulation,
-                                     const var &fm_amount) {
-        return osc_uniform(rng, time, params.frequency, params.phaseShift,
-                           params.warmth, params.harshness, params.amplitude,
-                           params.noiseLevel, modulation, fm_amount);
+  private:
+    void setNestedAttribute(const std::string &name,
+                            const torch::Tensor &value) {
+        std::istringstream name_stream(name);
+        std::string segment;
+        std::vector<std::string> path_parts;
+
+        while (std::getline(name_stream, segment, '.')) {
+            path_parts.push_back(segment);
+        }
+
+        torch::jit::Module current_module = torchModule;
+        for (size_t i = 0; i < path_parts.size() - 1; ++i) {
+            current_module = current_module.attr(path_parts[i]).toModule();
+        }
+
+        current_module.setattr(path_parts.back(), value);
     }
 
-    autodiff::var synth_sample(std::mt19937 &rng, const autodiff::var &time,
-                               const SynthesizerParameters &params) {
-        using autodiff::var;
-
-        // Calculate envelopes
-        var env_vol_a = env_uniform(time, params.volumeA);
-        var env_vol_b = env_uniform(time, params.volumeB);
-        var env_mod = env_uniform(time, params.highLowModulation);
-
-        // Interpolate settings from modulation
-        SingleOscillatorParameters osc_a_settings_modulated =
-            single_osc_linear_interp(params.oscillatorA.lowModulation,
-                                     params.oscillatorA.highModulation,
-                                     env_mod);
-        SingleOscillatorParameters osc_b_settings_modulated =
-            single_osc_linear_interp(params.oscillatorB.lowModulation,
-                                     params.oscillatorB.highModulation,
-                                     env_mod);
-
-        // Calculate frequency modulation amount
-        var env_fm = env_uniform(time, params.fmAmount);
-        var fm_amount =
-            linear_interp(params.startFmAmount, params.endFmAmount, env_fm);
-
-        // Calculate oscillators
-        var osc_b =
-            single_osc_uniform(rng, time, osc_b_settings_modulated, 0.0, 0.0);
-        var osc_a = single_osc_uniform(rng, time, osc_a_settings_modulated,
-                                       osc_b, fm_amount);
-
-        // Multiply by envelopes
-        osc_a *= env_vol_a;
-        osc_b *= env_vol_b;
-
-        return osc_a + osc_b;
+    void setRequiresGrad(bool requiresGrad) {
+        for (const auto &pair : torchModule.named_parameters()) {
+            torch::Tensor param = pair.value;
+            param.set_requires_grad(requiresGrad);
+        }
     }
+
+    void zeroGrad() {
+        for (const auto &pair : torchModule.named_parameters()) {
+            torch::Tensor param = pair.value;
+            if (param.grad().defined()) {
+                param.grad().zero_();
+            }
+        }
+    }
+
+    torch::jit::Module torchModule;
 };
