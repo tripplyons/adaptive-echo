@@ -62,3 +62,31 @@ class Synth(nn.Module):
             ]
         )
         return params
+
+    @torch.jit.export
+    def decode_settings(self, settings_input: torch.Tensor):
+        num_env_params = 5
+        num_osc_params = 12
+
+        index = 0
+        self.env_vol_a.decode_settings(settings_input[index : index + num_env_params])
+        index += num_env_params
+        self.env_vol_b.decode_settings(settings_input[index : index + num_env_params])
+        index += num_env_params
+        self.env_mod.decode_settings(settings_input[index : index + num_env_params])
+        index += num_env_params
+        self.osc_a.decode_settings(settings_input[index : index + num_osc_params])
+        index += num_osc_params
+        self.osc_b.decode_settings(settings_input[index : index + num_osc_params])
+        index += num_osc_params
+        self.env_fm.decode_settings(settings_input[index : index + num_env_params])
+        index += num_env_params
+        self.fm_range_low.data.copy_(settings_input[index])
+        index += 1
+        self.fm_range_high.data.copy_(settings_input[index])
+        index += 1
+
+        if index != 46:
+            raise ValueError(f"Expected 46 index, got {index}")
+        if settings_input.shape[0] != 46:
+            raise ValueError(f"Expected 46 settings, got {settings_input.shape[0]}")
