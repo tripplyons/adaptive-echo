@@ -123,13 +123,12 @@ list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
 # Fetch LibTorch
 include(FetchContent)
-FetchContent_Declare(
-    LibTorch
+FetchContent_Declare(libtorch
     URL https://download.pytorch.org/libtorch/nightly/cpu/libtorch-shared-with-deps-latest.zip
 )
-FetchContent_MakeAvailable(LibTorch)
-list(APPEND CMAKE_PREFIX_PATH "${LibTorch_SOURCE_DIR}")
-find_package(Torch REQUIRED)
+FetchContent_MakeAvailable(libtorch)
+find_package(Torch REQUIRED PATHS ${libtorch_SOURCE_DIR} NO_DEFAULT_PATH)
+list(APPEND CMAKE_PREFIX_PATH "${libtorch_SOURCE_DIR}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 set(COPY_PLUGIN_AFTER_BUILD TRUE)
