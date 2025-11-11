@@ -12,12 +12,6 @@ This is the main implementation of all features. It is a instrument plugin writt
 
 See [Plugin README](plugin/README.md) for details.
 
-## Python JAX Prototype
-
-A prototype implementation of the synthesizer in Python. It uses JAX for differentiation and compilation and JAX's Numpy API.
-
-See [Python JAX README](python-jax/README.md) for details.
-
 ## License
 
 Adaptive Echo is licensed under the MIT License. See [LICENSE](LICENSE) for details.
