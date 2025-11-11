@@ -65,3 +65,11 @@ class TwoEncoders(nn.Module):
         loss = -loss_logits.sum() / batch_size
 
         return loss
+
+    @torch.jit.export
+    def encode_settings(self, settings_input):
+        return self.settings_encoder(settings_input)
+
+    @torch.jit.export
+    def encode_audio(self, audio_input):
+        return self.audio_encoder(audio_input)
