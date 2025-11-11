@@ -27,20 +27,41 @@ def osc(
     # amount of frequency modulation
     fm_amount: torch.Tensor | None = None,
 ):
+    EPSILON = 1e-6
+
     noise = torch.randn(time.shape, dtype=time.dtype, device=time.device) * 0.5
 
     phase = time * freq + phase_shift
     if modulation is not None and fm_amount is not None:
         phase += modulation * fm_amount
-    phase %= 1
+    phase = phase % 1
 
-    phase = 0.5 * (phase**warmth - (1 - phase) ** warmth + 1)
+    phase = torch.clamp(phase, EPSILON, 1.0 - EPSILON)
+
+    phase_pow = torch.pow(phase, warmth)
+    one_minus_phase_pow = torch.pow(1.0 - phase, warmth)
+
+    phase_pow = torch.where(
+        torch.isfinite(phase_pow), phase_pow, torch.zeros_like(phase_pow)
+    )
+    one_minus_phase_pow = torch.where(
+        torch.isfinite(one_minus_phase_pow),
+        one_minus_phase_pow,
+        torch.zeros_like(one_minus_phase_pow),
+    )
+    phase = 0.5 * (phase_pow - one_minus_phase_pow + 1)
 
     phase *= 2 * torch.pi
 
     sin = torch.sin(phase)
 
-    wave = torch.sign(sin) * torch.abs(sin) ** harshness * amplitude
+    abs_sin = torch.abs(sin)
+    abs_sin = torch.clamp(abs_sin, EPSILON, 1.0)
+    sin_pow = torch.pow(abs_sin, harshness)
+
+    sin_pow = torch.where(torch.isfinite(sin_pow), sin_pow, torch.zeros_like(sin_pow))
+
+    wave = torch.sign(sin) * sin_pow * amplitude
 
     noise_interp = 0.1 * noise_level
 
@@ -63,20 +84,20 @@ def osc_uniform(
     semitones = linear_interp(min_freq, max_freq, freq)
     freq = 2 ** (semitones / 12)
 
-    min_phase_shift = 0
-    max_phase_shift = 1
+    min_phase_shift = torch.tensor(0, dtype=time.dtype, device=time.device)
+    max_phase_shift = torch.tensor(1.0, dtype=time.dtype, device=time.device)
     phase_shift = linear_interp(min_phase_shift, max_phase_shift, phase_shift)
 
-    min_warmth = 1 / 5
-    max_warmth = 5
+    min_warmth = torch.tensor(1.0 / 5.0, dtype=time.dtype, device=time.device)
+    max_warmth = torch.tensor(5.0, dtype=time.dtype, device=time.device)
     warmth = exp_interp(min_warmth, max_warmth, warmth)
 
-    min_harshness = 1 / 5
-    max_harshness = 5
+    min_harshness = torch.tensor(1.0 / 5.0, dtype=time.dtype, device=time.device)
+    max_harshness = torch.tensor(5.0, dtype=time.dtype, device=time.device)
     harshness = exp_interp(min_harshness, max_harshness, harshness)
 
-    min_amplitude = 0.1
-    max_amplitude = 1
+    min_amplitude = torch.tensor(0.1, dtype=time.dtype, device=time.device)
+    max_amplitude = torch.tensor(1.0, dtype=time.dtype, device=time.device)
     amplitude = linear_interp(min_amplitude, max_amplitude, amplitude)
 
     return osc(
