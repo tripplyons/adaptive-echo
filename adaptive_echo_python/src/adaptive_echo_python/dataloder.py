@@ -58,4 +58,4 @@ class WavDataset(Dataset):
 
         # Return both waveform and index (parsed from filename)
         # index = self._extract_index(self.wav_files[idx])
-        return waveform, file_id
+        return waveform, self.wav_files[file_id]
