@@ -14,6 +14,8 @@ uv sync
 
 ## Generating Graphs
 
+This command will export the synthesizer and models to TorchScript format and save them within the `plugin` folder for later use in the C++ audio plugin.
+
 ```bash
 uv run python src/adaptive_echo_python/export_graphs.py
 ```

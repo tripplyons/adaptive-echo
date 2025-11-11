@@ -6,7 +6,17 @@ A fully differentiable synthesizer capable of learning from sounds
 
 Adaptive Echo is a synthesizer audio plugin that can listen to a sound and recreate it using gradient descent and machine learning models. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
 
+## PyTorch Models
+
+Folder: [adaptive_echo_python](adaptive_echo_python)
+
+The synthesizer and models are implemented in Python using PyTorch. They are exported to TorchScript format and used in the C++ audio plugin to avoid the need to include a Python environment with the plugin.
+
+See [Python README](adaptive_echo_python/README.md) for details.
+
 ## C++ Audio Plugin
+
+Folder: [plugin](plugin)
 
 This is the main implementation of all features. It is a instrument plugin written in C++ using the JUCE framework.
 
