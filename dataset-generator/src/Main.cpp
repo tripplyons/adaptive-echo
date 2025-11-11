@@ -84,7 +84,7 @@ double** initializeCsv(char* outputPath, int numFiles) {
 // Create individual file with given settings
 void generateFile(const char *outputPath, double* weights) {
     double maxTime = 5;
-    int sampleRate = 44100;
+    int sampleRate = 48000;
     double timeInterval = 1.0 / sampleRate;
     int nSamples = maxTime * sampleRate;
     vector<double>* data = new vector<double>();

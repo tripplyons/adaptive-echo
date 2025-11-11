@@ -57,7 +57,7 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     // Simple sine generator state per channel
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
     double phaseInc = 0.0;                 // radians per sample
-    double currentSampleRate = 44100.0;
+    double currentSampleRate = 48000.0;
     Note activeNote;
     ADSREnvelope env;
     std::shared_ptr<ADSREnvelope> env_ptr;

@@ -42,7 +42,7 @@ class EnvelopeGenerator {
 class ADSREnvelope : public EnvelopeGenerator {
   public:
     ADSREnvelope()
-        : ADSREnvelope(0.01f, 0.1f, 1.0f, 0.1f, 1.0f, 1.0f, 1.0f, 44100) {}
+        : ADSREnvelope(0.01f, 0.1f, 1.0f, 0.1f, 1.0f, 1.0f, 1.0f, 48000) {}
 
     ADSREnvelope(float attackSeconds, float decaySeconds, float sustainLevel,
                  float releaseSeconds, float attack_c, float decay_c,

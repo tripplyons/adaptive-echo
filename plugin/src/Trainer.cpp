@@ -22,7 +22,7 @@ int main() {
     Synth synth2(synth);
     synth2.randomizeParameters();
 
-    unsigned int sample_rate = 44100;
+    unsigned int sample_rate = 48000;
     unsigned int num_samples = sample_rate * 5;
     vector<float> times(num_samples);
     for (unsigned int i = 0; i < num_samples; i++) {
