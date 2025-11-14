@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   plugin:
+    platform: linux/amd64
     build: .
     container_name: adaptive-echo
     ports:
