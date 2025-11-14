@@ -10,5 +10,10 @@ services:
     stdin_open: true
     tty: true
     restart: "no"
+    volumes:
+      - builder-build:/app/build
     environment:
       - DISPLAY=:99
+
+volumes:
+  builder-build:

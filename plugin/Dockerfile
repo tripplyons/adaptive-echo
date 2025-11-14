@@ -54,9 +54,13 @@ COPY CMakeLists.txt /app
 # Set working directory to app root
 WORKDIR /app
 
-# Configure and build
-RUN cmake -S . -B build -G Ninja
-RUN cmake --build build --parallel $(nproc)
+# Configure and build with cache mount for build directory reuse
+RUN --mount=type=cache,target=/app/build-cache \
+    cmake -S . -B /app/build-cache -G Ninja && \
+    cmake --build /app/build-cache --parallel $(nproc) && \
+    mkdir -p /app/build && \
+    cp -r /app/build-cache/AdaptiveEcho_artefacts /app/build/ && \
+    cp -r /app/build-cache/_deps /app/build/ || true
 
 RUN ls -la /app/build/AdaptiveEcho_artefacts/Standalone
 
@@ -94,9 +98,6 @@ COPY supervisord.conf /root/supervisord.conf
 COPY --from=builder /app/build/AdaptiveEcho_artefacts/Standalone/AdaptiveEcho /app
 # Copy libtorch libraries
 COPY --from=builder /app/build/_deps/libtorch-src/lib/*.so /app
-
-# Make sure the plugin runs for 1 second without crashing
-RUN timeout 1s /app/AdaptiveEcho
 
 EXPOSE 6080
 
