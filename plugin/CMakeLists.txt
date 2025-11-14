@@ -8,6 +8,11 @@ project(AdaptiveEcho
     LANGUAGES C CXX
 )
 
+# Set C++ ABI compatibility for libtorch
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
+
+set(BUILD_PYTHON OFF)
+
 if(UNIX)
     # On Unix systems, use 'which' to find clang paths
     execute_process(
@@ -122,9 +127,19 @@ FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_PREFIX_PATH ${Catch2_BINARY_DIR})
 
 # Fetch LibTorch
+set(TORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-2.9.1%2Bcpu.zip")
+
+if(APPLE)
+    set(TORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.9.1.zip")
+endif()
+
+if(NOT UNIX)
+    set(TORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.9.1%2Bcpu.zip")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(libtorch
-    URL https://download.pytorch.org/libtorch/nightly/cpu/libtorch-shared-with-deps-latest.zip
+    URL ${TORCH_URL}
 )
 FetchContent_MakeAvailable(libtorch)
 find_package(Torch REQUIRED PATHS ${libtorch_SOURCE_DIR} NO_DEFAULT_PATH)
@@ -221,12 +236,6 @@ target_link_libraries(AdaptiveEcho PRIVATE CURL::libcurl)
 
 juce_generate_juce_header(AdaptiveEcho)
 
-add_executable(Trainer)
-
-target_sources(Trainer PRIVATE src/Trainer.cpp)
-target_link_libraries(Trainer PRIVATE ${TORCH_LIBRARIES})
-target_include_directories(Trainer PRIVATE ${TORCH_INCLUDE_DIRS})
-target_compile_options(Trainer PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(DatasetGenerator)
 
