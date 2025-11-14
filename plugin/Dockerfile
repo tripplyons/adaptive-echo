@@ -73,6 +73,9 @@ RUN apt update && apt install -y \
     x11vnc \
     supervisor \
     libatomic1 \
+    libgomp1 \
+    libopenblas-dev \
+    libjemalloc-dev \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -89,7 +92,11 @@ COPY supervisord.conf /root/supervisord.conf
 
 # Copy built targets
 COPY --from=builder /app/build/AdaptiveEcho_artefacts/Standalone/AdaptiveEcho /app
-COPY --from=builder /app/build/Trainer /app
+# Copy libtorch libraries
+COPY --from=builder /app/build/_deps/libtorch-src/lib/*.so /app
+
+# Make sure the plugin runs for 1 second without crashing
+RUN timeout 1s /app/AdaptiveEcho
 
 EXPOSE 6080
 
