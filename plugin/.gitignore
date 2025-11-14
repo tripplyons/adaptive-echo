@@ -1,5 +1,6 @@
 # build information from cmake
 build
+docker-build
 # cache used by clangd
 .cache
 # Windows builds
