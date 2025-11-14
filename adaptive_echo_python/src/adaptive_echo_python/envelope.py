@@ -39,8 +39,8 @@ def env_uniform(
     sustain: torch.Tensor,
     release: torch.Tensor,
 ) -> torch.Tensor:
-    min_length = torch.tensor(0.5, dtype=time.dtype, device=time.device)
-    max_length = torch.tensor(5.0, dtype=time.dtype, device=time.device)
+    min_length = torch.tensor(0.2, dtype=time.dtype, device=time.device)
+    max_length = torch.tensor(2.0, dtype=time.dtype, device=time.device)
     length = exp_interp(min_length, max_length, length)
 
     min_attack = torch.tensor(0.05, dtype=time.dtype, device=time.device)
