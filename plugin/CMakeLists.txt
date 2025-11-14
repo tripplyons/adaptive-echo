@@ -11,11 +11,7 @@ project(AdaptiveEcho
 # Set C++ ABI compatibility for libtorch
 add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
-set(BUILD_SHARED_LIBS OFF)
 set(BUILD_PYTHON OFF)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
-set(CMAKE_INSTALL_RPATH "@loader_path")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 if(UNIX)
     # On Unix systems, use 'which' to find clang paths
