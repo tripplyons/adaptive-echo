@@ -4,14 +4,20 @@ import torch.nn as nn
 class EncoderLayer(nn.Module):
     def __init__(self, hidden_size, num_heads):
         super(EncoderLayer, self).__init__()
-        self.block = nn.Sequential(
-            nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-        )
+        self.norm = nn.LayerNorm(hidden_size)
+        self.linear = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(0.2)
+        self.gelu = nn.GELU()
+
+        self.linear.weight.data.normal_(0, 1e-3)
+        self.linear.bias.data.zero_()
 
     def forward(self, x):
-        return self.block(x)
+        residual = self.linear(x)
+        residual = self.gelu(residual)
+        residual = self.dropout(residual) 
+
+        return self.norm(x + residual)
 
 
 class Encoder(nn.Module):
