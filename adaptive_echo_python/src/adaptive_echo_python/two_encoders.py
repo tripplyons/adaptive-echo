@@ -1,6 +1,7 @@
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
+import torchaudio.transforms as T
 
 from adaptive_echo_python.encoder import Encoder
 
@@ -13,6 +14,7 @@ class TwoEncoders(nn.Module):
         embedding_size,
         hidden_size,
         num_layers,
+        sample_rate=8192
     ):
         super(TwoEncoders, self).__init__()
         conv_hidden_size = 3
@@ -30,12 +32,29 @@ class TwoEncoders(nn.Module):
             settings_input_size, embedding_size, hidden_size, num_layers
         )
 
+        self.audio_transform = nn.Sequential(
+            T.MelSpectrogram(
+                n_fft=4096,
+                hop_length=1024,
+                win_length=4096,
+                window_fn=torch.hann_window,
+                pad_mode="reflect",
+                return_complex=True,
+                normalized=True,
+                onesided=True,
+                power=2.0,
+                sample_rate=8192,
+                n_mels=128
+            ),
+            T.AmplitudeToDB(stype='power')
+        )
+
         # learnable hyperparameters for SigLIP loss function
         self.log_t = nn.Parameter(torch.tensor(0.0))
         self.b = nn.Parameter(torch.tensor(0.0))
 
     @staticmethod
-    def preprocess_audio(audio_input):
+    def preprocess_audio_standard_spectrogram(audio_input):
         with torch.no_grad():
             audio_input = audio_input / torch.norm(audio_input, dim=-1, keepdim=True)
             spectrogram = torch.stft(
@@ -52,6 +71,14 @@ class TwoEncoders(nn.Module):
             spectrogram = torch.abs(spectrogram)
 
             return spectrogram.flatten(start_dim=1)
+        
+    # uses log-mel spectrogram which prioritizes lower frequencies and uses a log decibel scale
+    def preprocess_audio(self, audio_input):
+        with torch.no_grad():
+            audio_input = audio_input / torch.norm(audio_input, dim=1, keepdim=True)
+            mel_spectrogram = self.audio_transform(audio_input)
+            return mel_spectrogram.flatten(start_dim=1)
+        
 
     def forward(self, audio_input, settings_input):
         audio_embedding = self.encode_audio(
@@ -104,7 +131,8 @@ class TwoEncoders(nn.Module):
 
     @torch.jit.export
     def encode_audio(self, audio_input):
-        audio_sequential_result = self.audio_sequential(audio_input.unsqueeze(-2))[
+        preprocessed_audio = self.preprocess_audio(audio_input)
+        audio_sequential_result = self.audio_sequential(preprocessed_audio.unsqueeze(-2))[
             ..., 0, :
         ]
         return self.audio_encoder(audio_sequential_result)
