@@ -1,8 +1,10 @@
 from pathlib import Path
+
+import numpy as np
+import torch
+
 from adaptive_echo_python.synth import Synth, synth
 from adaptive_echo_python.two_encoders import TwoEncoders
-import torch
-import numpy as np
 
 num_seconds = 2
 training_sample_rate = 8192

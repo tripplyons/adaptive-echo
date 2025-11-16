@@ -106,11 +106,9 @@ def synth(settings: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
         times, settings[39], settings[40], settings[41], settings[42], settings[43]
     )
 
-
     fm_range_low = settings[44]
     fm_range_high = settings[45]
     fm_amount = linear_interp(fm_range_low, fm_range_high, env_fm[None])[0]
-
 
     osc_b_low_settings = settings[27:39:2]
     osc_b_high_settings = settings[28:39:2]

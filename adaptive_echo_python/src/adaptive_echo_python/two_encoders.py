@@ -1,6 +1,6 @@
 import torch
-from torch.nn import functional as F
 import torch.nn as nn
+from torch.nn import functional as F
 
 from adaptive_echo_python.encoder import Encoder
 
