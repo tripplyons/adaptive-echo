@@ -1,8 +1,10 @@
 import os
 import re
+
 import torch
-from torch.utils.data import Dataset, DataLoader
 import torchaudio
+from torch.utils.data import DataLoader, Dataset
+
 
 class WavDataset(Dataset):
     def __init__(self, file, transform=None, target_sample_rate=None):
@@ -18,14 +20,14 @@ class WavDataset(Dataset):
 
         self.wav_files = dict()
 
-        with open(file,'r') as f:
+        with open(file, "r") as f:
             for line in f:
-                sep = line.split(',')
+                sep = line.split(",")
                 self.wav_files[sep[0]] = torch.Tensor([float(s) for s in sep[1:]])
-        
-        self.file_ids = sorted(self.wav_files.keys(),key= lambda x:self._extract_index(x))
-        
 
+        self.file_ids = sorted(
+            self.wav_files.keys(), key=lambda x: self._extract_index(x)
+        )
 
         # Collect all .wav files
         # self.wav_files = sorted(
@@ -35,7 +37,7 @@ class WavDataset(Dataset):
 
     def _extract_index(self, filename):
         """Extract numeric index from filename (e.g., 'audio_23.wav' -> 23)."""
-        match = re.search(r'(\d+)', filename)
+        match = re.search(r"(\d+)", filename)
         return int(match.group(1)) if match else -1
 
     def __len__(self):
@@ -48,7 +50,9 @@ class WavDataset(Dataset):
 
         # Resample if needed
         if self.target_sample_rate and sample_rate != self.target_sample_rate:
-            resampler = torchaudio.transforms.Resample(sample_rate, self.target_sample_rate)
+            resampler = torchaudio.transforms.Resample(
+                sample_rate, self.target_sample_rate
+            )
             waveform = resampler(waveform)
             sample_rate = self.target_sample_rate
 

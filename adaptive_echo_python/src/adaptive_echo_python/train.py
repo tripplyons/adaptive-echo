@@ -1,8 +1,10 @@
 from pathlib import Path
+
+import numpy as np
+import torch
+
 from adaptive_echo_python.synth import Synth, synth
 from adaptive_echo_python.two_encoders import TwoEncoders
-import torch
-import numpy as np
 
 num_seconds = 2
 training_sample_rate = 8192
@@ -19,9 +21,9 @@ def get_device():
 
 
 def train():
-    encoder_embedding_size = 256
-    encoder_hidden_size = 256
-    encoder_num_layers = 3
+    encoder_embedding_size = 512
+    encoder_hidden_size = 512
+    encoder_num_layers = 8
 
     audio_encoder_input_size = TwoEncoders.preprocess_audio(
         torch.randn(1, training_sample_rate * num_seconds)
@@ -48,15 +50,31 @@ def train():
 
     two_encoders.train()
 
-
-    optimizer = torch.optim.AdamW(two_encoders.parameters(), lr=3e-5, weight_decay=1e-2)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.99)
+    optimizer_muon = torch.optim.Muon(
+        [
+            {"params": two_encoders.settings_encoder.layers.parameters()},
+            {"params": two_encoders.audio_encoder.layers.parameters()},
+        ]
+    )
+    optimizer_adamw = torch.optim.AdamW(
+        [
+            {"params": two_encoders.settings_encoder.project_in.parameters()},
+            {"params": two_encoders.settings_encoder.project_out.parameters()},
+            {"params": two_encoders.audio_encoder.project_in.parameters()},
+            {"params": two_encoders.audio_encoder.project_out.parameters()},
+            {"params": two_encoders.log_t},
+            {"params": two_encoders.b},
+        ]
+    )
 
     batch_size = 4096
-    dataset_size = batch_size * 4
-    test_dataset_size = batch_size * 1
+    dataset_size = batch_size * 1
+    evaluation_batch_size = 100
+    test_dataset_size = 1000
 
-    synth_parallel = torch.compile(torch.vmap(synth, in_dims=(0, None), randomness="different"))
+    synth_parallel = torch.compile(
+        torch.vmap(synth, in_dims=(0, None), randomness="different")
+    )
 
     def generate_dataset():
         with torch.inference_mode():
@@ -103,7 +121,7 @@ def train():
 
     test_dataset = torch.utils.data.TensorDataset(test_settings, test_audio)
     test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=True
+        test_dataset, batch_size=evaluation_batch_size, shuffle=True
     )
 
     def evaluate():
@@ -115,16 +133,24 @@ def train():
             for i, (settings, audio) in enumerate(test_dataloader):
                 loss = two_encoders.loss(audio.to(device), settings.to(device))
                 losses.append(loss.item())
-                audio_accuracy, settings_accuracy = two_encoders.accuracies(audio.to(device), settings.to(device))
+                audio_accuracy, settings_accuracy = two_encoders.accuracies(
+                    audio.to(device), settings.to(device)
+                )
                 audio_accuracies.append(audio_accuracy.item())
                 settings_accuracies.append(settings_accuracy.item())
-            
-            return np.mean(losses), np.mean(audio_accuracies), np.mean(settings_accuracies)
+
+            return (
+                np.mean(losses),
+                np.mean(audio_accuracies),
+                np.mean(settings_accuracies),
+            )
 
     print("Dataset generated, starting training")
 
     eval_loss, eval_audio_accuracy, eval_settings_accuracy = evaluate()
-    print(f"Initial evaluation loss: {eval_loss}, audio accuracy: {eval_audio_accuracy}, settings accuracy: {eval_settings_accuracy}")
+    print(
+        f"Initial evaluation loss: {eval_loss}, audio accuracy: {eval_audio_accuracy}, settings accuracy: {eval_settings_accuracy}"
+    )
 
     num_epochs = 100
 
@@ -135,13 +161,14 @@ def train():
         losses = []
 
         for settings, audio in dataloader:
-            optimizer.zero_grad()
+            optimizer_muon.zero_grad()
+            optimizer_adamw.zero_grad()
 
             loss = two_encoders.loss(audio, settings)
 
             loss.backward()
-            optimizer.step()
-            scheduler.step()
+            optimizer_muon.step()
+            optimizer_adamw.step()
 
             losses.append(loss.item())
 
@@ -157,7 +184,11 @@ def train():
 
         with torch.inference_mode():
             eval_loss, eval_audio_accuracy, eval_settings_accuracy = evaluate()
-            print(f"Epoch: {epoch}, evaluation loss: {eval_loss}, audio accuracy: {eval_audio_accuracy}, settings accuracy: {eval_settings_accuracy}")
+            print(
+                f"Epoch: {epoch}, evaluation loss: {eval_loss}, audio accuracy: {eval_audio_accuracy}, settings accuracy: {eval_settings_accuracy}"
+            )
+
+            print(f"log_t: {two_encoders.log_t.item()}, b: {two_encoders.b.item()}")
 
     two_encoders.eval()
 

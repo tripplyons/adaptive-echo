@@ -1,23 +1,23 @@
 import torch.nn as nn
+from torch.nn import functional as F
 
 
 class EncoderLayer(nn.Module):
     def __init__(self, hidden_size, num_heads):
         super(EncoderLayer, self).__init__()
-        self.norm = nn.LayerNorm(hidden_size)
-        self.linear = nn.Linear(hidden_size, hidden_size)
-        self.dropout = nn.Dropout(0.2)
+        self.linear = nn.Linear(hidden_size, hidden_size, bias=False)
         self.gelu = nn.GELU()
-
-        self.linear.weight.data.normal_(0, 1e-3)
-        self.linear.bias.data.zero_()
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
         residual = self.linear(x)
         residual = self.gelu(residual)
-        residual = self.dropout(residual) 
+        residual = self.dropout(residual)
 
-        return self.norm(x + residual)
+        x = x + residual
+        x = F.layer_norm(x, x.shape[-1:])
+
+        return x
 
 
 class Encoder(nn.Module):

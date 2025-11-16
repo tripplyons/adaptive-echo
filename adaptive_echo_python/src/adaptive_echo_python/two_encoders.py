@@ -1,6 +1,6 @@
 import torch
-from torch.nn import functional as F
 import torch.nn as nn
+from torch.nn import functional as F
 
 from adaptive_echo_python.encoder import Encoder
 
@@ -15,13 +15,9 @@ class TwoEncoders(nn.Module):
         num_layers,
     ):
         super(TwoEncoders, self).__init__()
-        conv_hidden_size = 3
 
-        self.audio_sequential = nn.Sequential(
-            nn.Conv1d(1, conv_hidden_size, kernel_size=3, padding=1),
-            nn.GELU(),
-            nn.Conv1d(conv_hidden_size, 1, kernel_size=3, padding=1),
-        )
+        self.audio_input_size = audio_input_size
+        self.settings_input_size = settings_input_size
 
         self.audio_encoder = Encoder(
             audio_input_size, embedding_size, hidden_size, num_layers
@@ -30,36 +26,38 @@ class TwoEncoders(nn.Module):
             settings_input_size, embedding_size, hidden_size, num_layers
         )
 
-        # learnable hyperparameters for SigLIP loss function
-        self.log_t = nn.Parameter(torch.tensor(0.0))
-        self.b = nn.Parameter(torch.tensor(0.0))
+        self.log_t = nn.Parameter(torch.tensor(-2.5))
+        self.b = nn.Parameter(torch.tensor(-9.0))
 
     @staticmethod
     def preprocess_audio(audio_input):
         with torch.no_grad():
-            audio_input = audio_input / torch.norm(audio_input, dim=-1, keepdim=True)
+            audio_input -= torch.mean(audio_input, dim=-1, keepdim=True)
+            audio_input /= torch.std(audio_input, dim=-1, keepdim=True)
+            n_fft = 2048
             spectrogram = torch.stft(
                 audio_input,
-                n_fft=4096,
-                hop_length=1024,
-                win_length=4096,
-                window=torch.hann_window(4096).to(audio_input.device),
+                n_fft=n_fft,
+                hop_length=n_fft // 4,
+                win_length=n_fft,
+                window=torch.hann_window(n_fft).to(audio_input.device),
                 pad_mode="reflect",
                 return_complex=True,
                 normalized=True,
                 onesided=True,
             )
             spectrogram = torch.abs(spectrogram)
+            log_spectrogram = torch.log(spectrogram + 1e-6)
 
-            return spectrogram.flatten(start_dim=1)
+            return log_spectrogram.flatten(start_dim=1)
 
     def forward(self, audio_input, settings_input):
-        audio_embedding = self.encode_audio(
+        audio_embedding = self.audio_encoder(
             audio_input,
         )
-        settings_embedding = self.encode_settings(settings_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
-        return audio_embedding, settings_embedding
+        return audio_embedding + settings_embedding
 
     @torch.jit.export
     def loss(self, audio_embedding, settings_embedding):
@@ -67,7 +65,8 @@ class TwoEncoders(nn.Module):
 
     @torch.jit.export
     def siglip_loss(self, audio_input, settings_input):
-        audio_embedding, settings_embedding = self.forward(audio_input, settings_input)
+        audio_embedding = self.audio_encoder(audio_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
         t = torch.exp(self.log_t)
         normalized_audio = audio_embedding / torch.norm(
@@ -94,25 +93,16 @@ class TwoEncoders(nn.Module):
         )
 
         loss_logits = F.logsigmoid(logits * labels)
+
         loss = -loss_logits.sum() / batch_size
 
         return loss
 
-    @torch.jit.export
-    def encode_settings(self, settings_input):
-        return self.settings_encoder(settings_input)
-
-    @torch.jit.export
-    def encode_audio(self, audio_input):
-        audio_sequential_result = self.audio_sequential(audio_input.unsqueeze(-2))[
-            ..., 0, :
-        ]
-        return self.audio_encoder(audio_sequential_result)
-
     def accuracies(self, audio_input, settings_input):
         batch_size = audio_input.shape[0]
 
-        audio_embedding, settings_embedding = self.forward(audio_input, settings_input)
+        audio_embedding = self.audio_encoder(audio_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
         normalized_audio = audio_embedding / torch.norm(
             audio_embedding, dim=-1, keepdim=True
