@@ -7,12 +7,10 @@ class EncoderLayer(nn.Module):
         super(EncoderLayer, self).__init__()
         self.linear = nn.Linear(hidden_size, hidden_size, bias=False)
         self.gelu = nn.GELU()
-        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
         residual = self.linear(x)
         residual = self.gelu(residual)
-        residual = self.dropout(residual)
 
         x = x + residual
         x = F.layer_norm(x, x.shape[-1:])
