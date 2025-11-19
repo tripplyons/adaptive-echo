@@ -46,37 +46,20 @@ if(UNIX)
 endif()
 
 if(WIN32)
-    # On Windows, use 'where' and extract first result (main/preferred installation)
+    # Find clang-cl (MSVC-compatible Clang)
     execute_process(
-        COMMAND where clang
-        OUTPUT_VARIABLE CLANG_OUTPUT
+        COMMAND where clang-cl
+        OUTPUT_VARIABLE CLANGCL_OUTPUT
         OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE CLANG_RESULT
+        RESULT_VARIABLE CLANGCL_RESULT
     )
-
-    execute_process(
-        COMMAND where clang++
-        OUTPUT_VARIABLE CLANGXX_OUTPUT
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE CLANGXX_RESULT
-    )
-
-    # Extract first line (main result) if command succeeded
-    if(CLANG_RESULT EQUAL 0 AND NOT CLANG_OUTPUT STREQUAL "")
-        # Get first line (handles both \r\n and \n)
-        string(REGEX MATCH "^[^\r\n]+" CLANG_PATH "${CLANG_OUTPUT}")
-        set(CMAKE_C_COMPILER ${CLANG_PATH} CACHE STRING "" FORCE)
-        message(STATUS "Found C compiler: ${CMAKE_C_COMPILER}")
+    if(CLANGCL_RESULT EQUAL 0 AND NOT CLANGCL_OUTPUT STREQUAL "")
+        string(REGEX MATCH "^[^\r\n]+" CLANGCL_PATH "${CLANGCL_OUTPUT}")
+        set(CMAKE_C_COMPILER ${CLANGCL_PATH} CACHE STRING "C compiler" FORCE)
+        set(CMAKE_CXX_COMPILER ${CLANGCL_PATH} CACHE STRING "C++ compiler" FORCE)
+        message(STATUS "Found MSVC-compatible Clang compiler (clang-cl): ${CMAKE_CXX_COMPILER}")
     else()
-        message(FATAL_ERROR "clang not found via 'where' command - clang is required for this build")
-    endif()
-
-    if(CLANGXX_RESULT EQUAL 0 AND NOT CLANGXX_OUTPUT STREQUAL "")
-        string(REGEX MATCH "^[^\r\n]+" CLANGXX_PATH "${CLANGXX_OUTPUT}")
-        set(CMAKE_CXX_COMPILER ${CLANGXX_PATH} CACHE STRING "" FORCE)
-        message(STATUS "Found CXX compiler: ${CMAKE_CXX_COMPILER}")
-    else()
-        message(FATAL_ERROR "clang++ not found via 'where' command - clang++ is required for this build")
+        message(FATAL_ERROR "clang-cl not found. Please install LLVM with clang-cl.")
     endif()
 endif()
 
@@ -198,8 +181,26 @@ target_compile_definitions(AdaptiveEcho
     JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
 )
 
-# Warnings
-target_compile_options(AdaptiveEcho PRIVATE -Wall -Wextra -Wpedantic)
+if(MSVC)
+    # Get all source files from the target
+    get_target_property(SRCS AdaptiveEcho SOURCES)
+
+    foreach(src IN LISTS SRCS)
+        # Apply warnings only to your own source files
+        if(src MATCHES "${CMAKE_CURRENT_SOURCE_DIR}/src/.*")
+            message(STATUS "Applying /W3 to: ${src}")
+            set_source_files_properties(${src} PROPERTIES COMPILE_OPTIONS "/W3")
+        else()
+            # Suppress warnings for non-project files
+            set_source_files_properties(${src} PROPERTIES COMPILE_OPTIONS "/W0")
+        endif()
+    endforeach()
+else()
+    target_compile_options(AdaptiveEcho PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Mark JUCE headers as SYSTEM
+target_include_directories(AdaptiveEcho SYSTEM PRIVATE ${JUCE_INCLUDE_DIRS})
 
 # LTO (Release)
 if(ADAPTIVEECHO_ENABLE_LTO)
@@ -236,10 +237,25 @@ target_link_libraries(AdaptiveEcho PRIVATE CURL::libcurl)
 
 juce_generate_juce_header(AdaptiveEcho)
 
+add_executable(AdaptiveEchoDatasetGenerator
+    src/DatasetGenerator.cpp
+)
 
-add_executable(DatasetGenerator)
-
-target_sources(DatasetGenerator PRIVATE src/DatasetGenerator.cpp)
-target_link_libraries(DatasetGenerator PRIVATE ${TORCH_LIBRARIES})
-target_include_directories(DatasetGenerator PRIVATE ${TORCH_INCLUDE_DIRS})
-target_compile_options(DatasetGenerator PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(AdaptiveEchoDatasetGenerator PRIVATE ${TORCH_LIBRARIES})
+target_include_directories(AdaptiveEchoDatasetGenerator SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
+if(MSVC)
+    # Get all source files from the target
+    get_target_property(SRCS AdaptiveEchoDatasetGenerator SOURCES)
+    foreach(src IN LISTS SRCS)
+        # Apply warnings only to your own source files
+        if(src MATCHES "${CMAKE_CURRENT_SOURCE_DIR}/src/.*")
+            message(STATUS "Applying /W3 to: ${src}")
+            set_source_files_properties(${src} PROPERTIES COMPILE_OPTIONS "/W3")
+        else()
+            # Suppress warnings for non-project files
+            set_source_files_properties(${src} PROPERTIES COMPILE_OPTIONS "/W0")
+        endif()
+    endforeach()
+else()
+    target_compile_options(AdaptiveEchoDatasetGenerator PRIVATE -Wall -Wextra -Wpedantic)
+endif()
