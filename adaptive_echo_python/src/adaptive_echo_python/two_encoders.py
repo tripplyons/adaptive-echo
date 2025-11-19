@@ -1,6 +1,6 @@
 import torch
-from torch.nn import functional as F
 import torch.nn as nn
+from torch.nn import functional as F
 
 from adaptive_echo_python.encoder import Encoder
 
@@ -10,56 +10,139 @@ class TwoEncoders(nn.Module):
         self,
         audio_input_size,
         settings_input_size,
+        reduced_audio_size,
         embedding_size,
         hidden_size,
         num_layers,
     ):
         super(TwoEncoders, self).__init__()
-        conv_hidden_size = 3
 
-        self.audio_sequential = nn.Sequential(
-            nn.Conv1d(1, conv_hidden_size, kernel_size=3, padding=1),
-            nn.GELU(),
-            nn.Conv1d(conv_hidden_size, 1, kernel_size=3, padding=1),
+        self.audio_input_size = audio_input_size
+        self.settings_input_size = settings_input_size
+
+        self.reduced_audio_size = reduced_audio_size
+
+        self.n_fft = 2048
+        self.hop_length = self.n_fft // 4
+        self.window = nn.Parameter(torch.hann_window(self.n_fft), requires_grad=False)
+        with torch.inference_mode():
+            self.spectrogram_size = torch.stft(
+                torch.randn(1, self.audio_input_size, device=torch.device("cpu")),
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                win_length=self.n_fft,
+                window=self.window.to(torch.device("cpu")),
+                return_complex=True,
+                normalized=True,
+                onesided=True,
+            ).numel()
+
+        self.audio_reduction_encoder = nn.Sequential(
+            nn.Linear(self.spectrogram_size, self.reduced_audio_size, bias=False),
+            nn.LayerNorm(self.reduced_audio_size),
+        )
+        self.audio_reduction_decoder = nn.Linear(
+            self.reduced_audio_size, self.spectrogram_size, bias=False
         )
 
         self.audio_encoder = Encoder(
-            audio_input_size, embedding_size, hidden_size, num_layers
+            reduced_audio_size, embedding_size, hidden_size, num_layers
         )
         self.settings_encoder = Encoder(
             settings_input_size, embedding_size, hidden_size, num_layers
         )
 
-        # learnable hyperparameters for SigLIP loss function
-        self.log_t = nn.Parameter(torch.tensor(0.0))
-        self.b = nn.Parameter(torch.tensor(0.0))
+        self.log_t = nn.Parameter(torch.tensor(-3.0))
+        self.b = nn.Parameter(torch.tensor(-9.0))
 
-    @staticmethod
-    def preprocess_audio(audio_input):
+    def get_spectrogram(self, audio_input):
         with torch.no_grad():
-            audio_input = audio_input / torch.norm(audio_input, dim=-1, keepdim=True)
+            audio_input -= torch.mean(audio_input, dim=-1, keepdim=True)
+            audio_input /= torch.std(audio_input, dim=-1, keepdim=True)
             spectrogram = torch.stft(
                 audio_input,
-                n_fft=4096,
-                hop_length=1024,
-                win_length=4096,
-                window=torch.hann_window(4096).to(audio_input.device),
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                win_length=self.n_fft,
+                window=self.window.to(audio_input.device),
                 pad_mode="reflect",
                 return_complex=True,
                 normalized=True,
                 onesided=True,
             )
             spectrogram = torch.abs(spectrogram)
+            log_spectrogram = torch.log(spectrogram + 1e-6)
 
-            return spectrogram.flatten(start_dim=1)
+            return log_spectrogram.flatten(start_dim=1)
+
+    def preprocess_audio(self, audio_input):
+        spectrogram = self.get_spectrogram(audio_input)
+        reduced_audio = self.audio_reduction_encoder(spectrogram)
+        return reduced_audio
+
+    def normalize_vector(self, vector):
+        vector = vector - torch.mean(vector, dim=-1, keepdim=True)
+        vector = vector / torch.norm(vector, dim=-1, keepdim=True)
+        return vector
+
+    def fit_and_preprocess_audio(
+        self, audio_input, device, batch_size=256, num_epochs=10
+    ):
+        print(f"audio_input.shape: {audio_input.shape}")
+        with torch.inference_mode():
+            spectrogram = []
+            for i in range(0, len(audio_input), batch_size):
+                new_spectrogram = self.get_spectrogram(
+                    audio_input[i : i + batch_size].to(device)
+                )
+                spectrogram.append(new_spectrogram.cpu())
+            spectrogram = torch.cat(spectrogram, dim=0)
+        print(f"spectrogram.shape: {spectrogram.shape}")
+
+        dataset = torch.utils.data.TensorDataset(spectrogram)
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, shuffle=True
+        )
+
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": self.audio_reduction_encoder.parameters()},
+                {"params": self.audio_reduction_decoder.parameters()},
+            ],
+            lr=2e-4,
+            weight_decay=0.1,
+        )
+        for i in range(num_epochs):
+            losses = []
+            for (current_spectrogram,) in dataloader:
+                optimizer.zero_grad()
+                current_spectrogram = current_spectrogram.to(device)
+                reduced_audio = self.audio_reduction_encoder(current_spectrogram)
+                reconstructed_spectrogram = self.audio_reduction_decoder(reduced_audio)
+                loss = F.mse_loss(reconstructed_spectrogram, current_spectrogram)
+                loss.backward()
+                optimizer.step()
+                losses.append(loss.item())
+            print(
+                f"audio reduction - epoch: {i}, mean loss: {sum(losses) / len(losses)}"
+            )
+        with torch.inference_mode():
+            reduced_audio = []
+            for i in range(0, len(spectrogram), batch_size):
+                new_reduced_audio = self.audio_reduction_encoder(
+                    spectrogram[i : i + batch_size].to(device)
+                )
+                reduced_audio.append(new_reduced_audio.cpu())
+            reduced_audio = torch.cat(reduced_audio, dim=0)
+        return reduced_audio
 
     def forward(self, audio_input, settings_input):
-        audio_embedding = self.encode_audio(
+        audio_embedding = self.audio_encoder(
             audio_input,
         )
-        settings_embedding = self.encode_settings(settings_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
-        return audio_embedding, settings_embedding
+        return audio_embedding + settings_embedding
 
     @torch.jit.export
     def loss(self, audio_embedding, settings_embedding):
@@ -67,17 +150,12 @@ class TwoEncoders(nn.Module):
 
     @torch.jit.export
     def siglip_loss(self, audio_input, settings_input):
-        audio_embedding, settings_embedding = self.forward(audio_input, settings_input)
+        audio_embedding = self.audio_encoder(audio_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
         t = torch.exp(self.log_t)
-        normalized_audio = audio_embedding / torch.norm(
-            audio_embedding, dim=-1, keepdim=True
-        )
-        normalized_settings = settings_embedding / torch.norm(
-            settings_embedding, dim=-1, keepdim=True
-        )
-        normalized_audio = audio_embedding
-        normalized_settings = settings_embedding
+        normalized_audio = self.normalize_vector(audio_embedding)
+        normalized_settings = self.normalize_vector(settings_embedding)
 
         # Compute pairwise similarities: (batch_size, embedding_size) x (batch_size, embedding_size) -> (batch_size, batch_size)
         logits = (
@@ -94,32 +172,19 @@ class TwoEncoders(nn.Module):
         )
 
         loss_logits = F.logsigmoid(logits * labels)
+
         loss = -loss_logits.sum() / batch_size
 
         return loss
 
-    @torch.jit.export
-    def encode_settings(self, settings_input):
-        return self.settings_encoder(settings_input)
-
-    @torch.jit.export
-    def encode_audio(self, audio_input):
-        audio_sequential_result = self.audio_sequential(audio_input.unsqueeze(-2))[
-            ..., 0, :
-        ]
-        return self.audio_encoder(audio_sequential_result)
-
     def accuracies(self, audio_input, settings_input):
         batch_size = audio_input.shape[0]
 
-        audio_embedding, settings_embedding = self.forward(audio_input, settings_input)
+        audio_embedding = self.audio_encoder(audio_input)
+        settings_embedding = self.settings_encoder(settings_input)
 
-        normalized_audio = audio_embedding / torch.norm(
-            audio_embedding, dim=-1, keepdim=True
-        )
-        normalized_settings = settings_embedding / torch.norm(
-            settings_embedding, dim=-1, keepdim=True
-        )
+        normalized_audio = self.normalize_vector(audio_embedding)
+        normalized_settings = self.normalize_vector(settings_embedding)
 
         logits = torch.einsum("ae,se->as", normalized_audio, normalized_settings)
 
@@ -132,3 +197,37 @@ class TwoEncoders(nn.Module):
         settings_accuracy = (settings_predictions == settings_labels).float().mean()
 
         return audio_accuracy, settings_accuracy
+
+    def reconstruct_settings(self, audio_input):
+        self.eval()
+
+        batch_size = audio_input.shape[0]
+        settings = torch.randn((batch_size, self.settings_input_size), requires_grad=True, device=audio_input.device)
+
+        with torch.no_grad():
+            audio_embedding = self.audio_encoder(
+                self.preprocess_audio(audio_input)
+            )
+            audio_embedding = self.normalize_vector(audio_embedding)
+
+        optimizer = torch.optim.AdamW(
+            [settings],
+            lr=1e-2,
+            weight_decay=0.0,
+        )
+        for i in range(1000):
+            optimizer.zero_grad()
+
+            settings_embedding = self.settings_encoder(settings)
+            settings_embedding = self.normalize_vector(settings_embedding)
+
+            # maximize sum of cosine similarities
+            loss = -torch.einsum("ae,se->", audio_embedding, settings_embedding)
+            loss.backward()
+
+            optimizer.step()
+
+            if i % 100 == 0:
+                print(f"loss: {loss.item()}")
+
+        return settings.detach()
