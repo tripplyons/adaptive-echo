@@ -243,6 +243,15 @@ add_executable(AdaptiveEchoDatasetGenerator
 
 target_link_libraries(AdaptiveEchoDatasetGenerator PRIVATE ${TORCH_LIBRARIES})
 target_include_directories(AdaptiveEchoDatasetGenerator SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
+
+if (WIN32)
+    add_custom_command(TARGET AdaptiveEchoDatasetGenerator POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${libtorch_SOURCE_DIR}/lib
+            $<TARGET_FILE_DIR:AdaptiveEchoDatasetGenerator>
+    )
+endif()
+
 if(MSVC)
     # Get all source files from the target
     get_target_property(SRCS AdaptiveEchoDatasetGenerator SOURCES)
