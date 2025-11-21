@@ -146,6 +146,18 @@ find_package(Torch REQUIRED PATHS ${libtorch_SOURCE_DIR} NO_DEFAULT_PATH)
 list(APPEND CMAKE_PREFIX_PATH "${libtorch_SOURCE_DIR}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
+# Fetch OpenMP
+FetchContent_Declare(
+    openmp
+    GIT_REPOSITORY https://github.com/llvm/llvm-project.git
+    GIT_TAG llvmorg-17.0.6
+    SOURCE_SUBDIR openmp
+)
+FetchContent_MakeAvailable(openmp)
+
+# Find OpenMP package
+find_package(OpenMP REQUIRED)
+
 set(COPY_PLUGIN_AFTER_BUILD TRUE)
 
 if(WIN32)
@@ -188,6 +200,9 @@ target_link_libraries(AdaptiveEcho
     juce::juce_gui_basics
     juce::juce_graphics
     juce::juce_core
+    OpenMP::OpenMP_CXX
+    Torch::Torch
+    CURL::libcurl
 )
 
 # JUCE defines
@@ -232,6 +247,5 @@ install(TARGETS AdaptiveEcho
 )
 
 target_link_options(AdaptiveEcho PRIVATE "LINKER:-as-needed")
-target_link_libraries(AdaptiveEcho PRIVATE CURL::libcurl)
 
 juce_generate_juce_header(AdaptiveEcho)
