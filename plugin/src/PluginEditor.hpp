@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.hpp"
+#include "EnvelopeViewer.hpp"
 #include <JuceHeader.h>
 
 class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
@@ -23,10 +24,21 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Slider sustainSlider;
     juce::Slider releaseSlider;
 
+    juce::Slider attackCurveSlider;
+    juce::Slider decayCurveSlider;
+    juce::Slider sustainCurveSlider;
+    juce::Slider releaseCurveSlider;
+
     juce::Label attackLabel;
     juce::Label decayLabel;
     juce::Label sustainLabel;
     juce::Label releaseLabel;
+
+    juce::Label attackCurveLabel;
+    juce::Label decayCurveLabel;
+    juce::Label releaseCurveLabel;
+
+    EnvelopeViewer envelopeViewer;
 
     juce::MidiKeyboardComponent midiKeyboard{
         processor.getMidiKeyboardState(),
@@ -39,6 +51,10 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     std::unique_ptr<SliderAttachment> decayAttachment;
     std::unique_ptr<SliderAttachment> sustainAttachment;
     std::unique_ptr<SliderAttachment> releaseAttachment;
+
+    std::unique_ptr<SliderAttachment> attackCurveAttachment;
+    std::unique_ptr<SliderAttachment> decayCurveAttachment;
+    std::unique_ptr<SliderAttachment> releaseCurveAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
         AdaptiveEchoAudioProcessorEditor)

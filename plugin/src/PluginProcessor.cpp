@@ -19,7 +19,9 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
 
     // ADSR
     juce::NormalisableRange<float> ADSRrange =
-        juce::NormalisableRange<float>(0.1f, 5.0f, 0.01f, 0.3f);
+        juce::NormalisableRange<float>(ADSR_MIN, ADSR_MAX, 0.01f, 0.3f);
+    juce::NormalisableRange<float> CurveRange =
+        juce::NormalisableRange<float>(0.0, 1.0, 0.01f, 1.0f);
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "attack", "Attack", ADSRrange, 0.5f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -29,6 +31,18 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.0f, 1.0f), 0.5f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", ADSRrange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "attackControlX", "AttackControlX", CurveRange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "attackControlY", "AttackControlY", CurveRange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "decayControlX", "DecayControlX", CurveRange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "decayControlY", "DecayControlY", CurveRange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "releaseControlX", "ReleaseControlX", CurveRange, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "releaseControlY", "ReleaseControlY", CurveRange, 0.5f));
 
     return {params.begin(), params.end()};
 }
@@ -83,6 +97,9 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     float new_d = d;
     float new_s = s;
     float new_r = r;
+    float new_ac = ac;
+    float new_dc = dc;
+    float new_rc = rc;
 
     if (auto *aParam = apvts.getRawParameterValue("attack"))
         new_a = aParam->load();
@@ -92,13 +109,22 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         new_s = sParam->load();
     if (auto *rParam = apvts.getRawParameterValue("release"))
         new_r = rParam->load();
+    if (auto *acParam = apvts.getRawParameterValue("attackCurve"))
+        new_ac = acParam->load();
+    if (auto *dcParam = apvts.getRawParameterValue("decayCurve"))
+        new_dc = dcParam->load();
+    if (auto *rcParam = apvts.getRawParameterValue("releaseCurve"))
+        new_rc = rcParam->load();
 
     // Update ADSR parameters
-    if (new_a != a || new_d != d || new_s != s || new_r != r) {
+    if (new_a != a || new_d != d || new_s != s || new_r != r || new_ac != ac || new_dc != dc || new_rc != rc) {
         a = new_a;
         d = new_d;
         s = new_s;
         r = new_r;
+        ac = new_ac;
+        dc = new_ac;
+        rc = new_ac;
         env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                            static_cast<int>(currentSampleRate));
         env_ptr = std::make_shared<ADSREnvelope>(env);
@@ -144,8 +170,6 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)
                     ph -= juce::MathConstants<double>::twoPi;
-
-                std::cout << out[n] << std::endl;
             } else {
                 out[n] = 0.0f;
                 (void)volumeSmoothed.getNextValue();
