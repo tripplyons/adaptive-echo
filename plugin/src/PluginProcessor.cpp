@@ -109,11 +109,11 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         new_s = sParam->load();
     if (auto *rParam = apvts.getRawParameterValue("release"))
         new_r = rParam->load();
-    if (auto *acParam = apvts.getRawParameterValue("attackCurve"))
+    if (auto *acParam = apvts.getRawParameterValue("attackControlY"))
         new_ac = acParam->load();
-    if (auto *dcParam = apvts.getRawParameterValue("decayCurve"))
+    if (auto *dcParam = apvts.getRawParameterValue("decayControlY"))
         new_dc = dcParam->load();
-    if (auto *rcParam = apvts.getRawParameterValue("releaseCurve"))
+    if (auto *rcParam = apvts.getRawParameterValue("releaseControlY"))
         new_rc = rcParam->load();
 
     // Update ADSR parameters
@@ -123,8 +123,8 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         s = new_s;
         r = new_r;
         ac = new_ac;
-        dc = new_ac;
-        rc = new_ac;
+        dc = new_dc;
+        rc = new_rc;
         env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                            static_cast<int>(currentSampleRate));
         env_ptr = std::make_shared<ADSREnvelope>(env);

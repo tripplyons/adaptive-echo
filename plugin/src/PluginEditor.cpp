@@ -10,9 +10,29 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     setResizable(true, true);
     setSize(1000, 440);
 
+    // Global background colour
+    getLookAndFeel().setColour(juce::ResizableWindow::backgroundColourId,
+                               UI::background);
+
+    // Slider styling
+    auto stylize = [&](juce::Slider& s, juce::Label& l)
+    {
+        s.setColour(juce::Slider::rotarySliderFillColourId, UI::sliderFill);
+        s.setColour(juce::Slider::rotarySliderOutlineColourId, UI::sliderOutline);
+        s.setColour(juce::Slider::thumbColourId, UI::thumb);
+        s.setColour(juce::Slider::textBoxTextColourId, UI::text);
+        l.setColour(juce::Label::textColourId, UI::labelText);
+    };
+
+    stylize(volumeSlider,  volumeLabel);
+    stylize(attackSlider,  attackLabel);
+    stylize(decaySlider,   decayLabel);
+    stylize(sustainSlider, sustainLabel);
+    stylize(releaseSlider, releaseLabel);
+
     // Volume slider
     volumeSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    volumeSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    volumeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
     volumeSlider.setRange(0.0, 1.0, 0.0);
     addAndMakeVisible(volumeSlider);
 
@@ -25,24 +45,13 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     attackSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
     attackSlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
 
-    attackCurveSlider.setSliderStyle(
-        juce::Slider::RotaryHorizontalVerticalDrag);
-    attackCurveSlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
-    attackCurveSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
-
     addAndMakeVisible(attackSlider);
-    addAndMakeVisible(attackCurveSlider);
 
     decaySlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     decaySlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
     decaySlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
 
-    decayCurveSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    decayCurveSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
-    decayCurveSlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
-
     addAndMakeVisible(decaySlider);
-    addAndMakeVisible(decayCurveSlider);
 
     sustainSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     sustainSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
@@ -54,12 +63,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     releaseSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
     releaseSlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
 
-    releaseCurveSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    releaseCurveSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 60, 20);
-    releaseCurveSlider.setRange(ADSR_MIN, ADSR_MAX, 0.0);
-
     addAndMakeVisible(releaseSlider);
-    addAndMakeVisible(releaseCurveSlider);
 
     attackLabel.setJustificationType(juce::Justification::centred);
     attackLabel.setText("Attack", juce::dontSendNotification);
@@ -73,22 +77,10 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     releaseLabel.setJustificationType(juce::Justification::centred);
     releaseLabel.setText("Release", juce::dontSendNotification);
 
-    attackCurveLabel.setJustificationType(juce::Justification::centred);
-    attackCurveLabel.setText("Attack Curve", juce::dontSendNotification);
-
-    decayCurveLabel.setJustificationType(juce::Justification::centred);
-    decayCurveLabel.setText("Decay Curve", juce::dontSendNotification);
-
-    releaseCurveLabel.setJustificationType(juce::Justification::centred);
-    releaseCurveLabel.setText("Release Curve", juce::dontSendNotification);
-
     addAndMakeVisible(attackLabel);
-    addAndMakeVisible(attackCurveLabel);
     addAndMakeVisible(decayLabel);
-    addAndMakeVisible(decayCurveLabel);
     addAndMakeVisible(sustainLabel);
     addAndMakeVisible(releaseLabel);
-    addAndMakeVisible(releaseCurveLabel);
 
     addAndMakeVisible(envelopeViewer);
 
@@ -103,32 +95,27 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "release", releaseSlider);
 
-    attackCurveAttachment = std::make_unique<SliderAttachment>(
-        processor.apvts, "attackCurve", attackCurveSlider);
-    decayCurveAttachment = std::make_unique<SliderAttachment>(
-        processor.apvts, "decayCurve", decayCurveSlider);
-    releaseCurveAttachment = std::make_unique<SliderAttachment>(
-        processor.apvts, "releaseCurve", releaseCurveSlider);
-
     addAndMakeVisible(midiKeyboard);
     midiKeyboard.setAvailableRange(24, 108);
 }
 
-void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
-    g.fillAll(
-        getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
-    g.setColour(juce::Colours::white);
-    g.setFont(16.0f);
-    g.drawFittedText("Adaptive Echo - Sine Generator Example (w/ MIDI)",
+void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g)
+{
+    g.fillAll(UI::background);
+
+    g.setColour(UI::text);
+    g.setFont(48.0f);
+
+    g.drawFittedText("Adaptive Echo",
                      getLocalBounds().reduced(10, 6),
-                     juce::Justification::centredTop, 1);
+                     juce::Justification::topLeft,
+                     0);
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
     auto bounds = getLocalBounds().reduced(12);
     midiKeyboard.setBounds(bounds.removeFromBottom(100).reduced(4));
 
-    // auto header = bounds.removeFromTop(34);
     bounds.removeFromTop(34);
     auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
@@ -147,40 +134,25 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     auto releaseArea = controlArea.removeFromLeft(sliderWidth);
 
     volumeSlider.setBounds(volumeArea);
-    volumeLabel.setBounds(volumeSlider.getX(), volumeSlider.getBottom(),
-                          volumeSlider.getWidth(), 20);
 
     attackSlider.setBounds(
-        attackArea.removeFromTop(attackArea.getHeight() / 2));
-    attackCurveSlider.setBounds(
-        attackArea.removeFromBottom(attackArea.getHeight()));
+        attackArea.removeFromTop(attackArea.getHeight()));
 
-    decaySlider.setBounds(decayArea.removeFromTop(decayArea.getHeight() / 2));
-    decayCurveSlider.setBounds(
-        decayArea.removeFromBottom(decayArea.getHeight()));
+    decaySlider.setBounds(decayArea.removeFromTop(decayArea.getHeight()));
 
     sustainSlider.setBounds(sustainArea);
 
     releaseSlider.setBounds(
-        releaseArea.removeFromTop(releaseArea.getHeight() / 2));
-    releaseCurveSlider.setBounds(
-        releaseArea.removeFromBottom(releaseArea.getHeight()));
+        releaseArea.removeFromTop(releaseArea.getHeight()));
 
     attackLabel.setBounds(attackSlider.getX(), attackSlider.getBottom(),
                           attackSlider.getWidth(), 20);
-    attackCurveLabel.setBounds(attackCurveSlider.getX(),
-                               attackCurveSlider.getBottom(),
-                               attackCurveSlider.getWidth(), 20);
     decayLabel.setBounds(decaySlider.getX(), decaySlider.getBottom(),
                          decaySlider.getWidth(), 20);
-    decayCurveLabel.setBounds(decayCurveSlider.getX(),
-                              decayCurveSlider.getBottom(),
-                              decayCurveSlider.getWidth(), 20);
     sustainLabel.setBounds(sustainSlider.getX(), sustainSlider.getBottom(),
                            sustainSlider.getWidth(), 20);
     releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
                            releaseSlider.getWidth(), 20);
-    releaseCurveLabel.setBounds(releaseCurveSlider.getX(),
-                                releaseCurveSlider.getBottom(),
-                                releaseCurveSlider.getWidth(), 20);
+    volumeLabel.setBounds(volumeSlider.getX(), volumeSlider.getBottom(),
+                          volumeSlider.getWidth(), 20);
 }
