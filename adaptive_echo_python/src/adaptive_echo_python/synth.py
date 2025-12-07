@@ -143,3 +143,12 @@ def synth(settings: torch.Tensor, times: torch.Tensor) -> torch.Tensor:
     )
 
     return osc_a * env_vol_a + osc_b * env_vol_b
+
+
+synth_parallel = torch.compile(
+    torch.vmap(synth, in_dims=(0, None), randomness="different")
+)
+
+
+def inverse_sigmoid(x: torch.Tensor):
+    return -torch.log(1 / x - 1)
