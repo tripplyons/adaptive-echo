@@ -6,6 +6,7 @@
 
 #include "Note.hpp"
 #include "PluginEnvelope.hpp"
+#include "Oscillator.hpp"
 #include <memory>
 
 class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
@@ -61,6 +62,7 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     Note activeNote;
     ADSREnvelope env;
     std::shared_ptr<ADSREnvelope> env_ptr;
+    WavetableOscillator osc;
 
     // Smoothed volume to avoid zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>

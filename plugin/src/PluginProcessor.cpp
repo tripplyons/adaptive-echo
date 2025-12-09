@@ -54,10 +54,15 @@ void AdaptiveEchoAudioProcessor::prepareToPlay(double sampleRate,
     s = 1.0f;
     ac = dc = rc = 1.0f;
 
+    // Oscillator parameters
+    float w = 21.1;
+    float h = 0.1;
+
     env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                        static_cast<int>(currentSampleRate));
     env_ptr = std::make_shared<ADSREnvelope>(env);
     Note activeNote = Note();
+    osc = WavetableOscillator(w, h);
 }
 
 void AdaptiveEchoAudioProcessor::releaseResources() {}
@@ -140,6 +145,7 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
                 float amp = noteLevel * globalVol;
                 out[n] = std::sin(ph) * amp;
+                //out[n] = osc.sample(ph) * amp;
 
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)
