@@ -283,7 +283,53 @@ class TwoEncoders(nn.Module):
             population[0] = predicted_settings.squeeze(0)
 
         for gen in range(generations):
-            pass
+            with torch.no_grad():
+                # generate audio
+                generated_audio = synth_parallel(population, time)
 
+                # get embeddings
+                pop_audio_embeddings = self.audio_encoder(self.preprocess_audio(generated_audio))
+                pop_audio_embeddings = self.normalize_vector(pop_audio_embeddings)
+                pop_settings_embeddings = self.settings_encoder(population)
+                pop_settings_embeddings = self.normalize_vector(pop_settings_embeddings)
+
+                # calculate loss
+                audio_loss = torch.mm(pop_audio_embeddings, target_embedding.T)
+                settings_loss = torch.mm(pop_settings_embeddings, target_embedding.T)
+                scores = (0.25 * audio_loss + 0.75 * settings_loss).squeeze()
+
+                # sort scores
+                sorted_indices = torch.argsort(scores, descending=True)
+                population = population[sorted_indices]
+
+                best_score = scores[sorted_indices[0]].item()
+
+                # print loss occasionally
+                if gen % 10 == 0:
+                    print(f"Generation {gen}: Best score: {best_score:.3f}")
+
+
+                # keep best 
+                next_generation = population[:elite_size].clone()
+                num_children = population_size - elite_size
+
+                # select randomly from top 50%
+                parents_indices = torch.randint(0, population_size // 2, (num_children, 2))
+                parent_a = population[parents_indices[:,0]]
+                parent_b = population[parents_indices[:,1]]
+
+                # crossover
+                mask = torch.rand((num_children, num_settings)) < 0.5
+                children = torch.where(mask, parent_a, parent_b)
+
+                # mutation
+                mutation_mask = torch.rand_like(children) < mutation_rate
+                noise = torch.randn_like(children) * 0.1
+                children = children + (noise * mutation_mask)
+
+                children = torch.clamp(children, 0.0, 1.0)
+                population = torch.cat((next_generation, children), dim=0)
+
+        # return best individual
         best_settings = population[0].unsqueeze(0)
         return best_settings
