@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="512"
+   height="512"
+   viewBox="0 0 512 512"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.3.2 (091e20e, 2023-11-25, custom)"
+   sodipodi:docname="adaptive-echo-text-logo.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     inkscape:zoom="1.1808131"
+     inkscape:cx="113.05769"
+     inkscape:cy="251.09817"
+     inkscape:window-width="1920"
+     inkscape:window-height="1111"
+     inkscape:window-x="-9"
+     inkscape:window-y="-9"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';display:none;fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round;stroke-opacity:1"
+       x="261.36368"
+       y="321.54132"
+       id="text1-4-3"
+       inkscape:label="blue-E"><tspan
+         sodipodi:role="line"
+         id="tspan1-5-4"
+         x="261.36368"
+         y="321.54132"
+         style="fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-opacity:1">E</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';display:inline;fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:0;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1"
+       x="273.35974"
+       y="321.54004"
+       id="text1-4-0"
+       inkscape:label="blue-Echo"><tspan
+         sodipodi:role="line"
+         id="tspan1-5-1"
+         x="0"
+         y="0"
+         style="fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:0;stroke-dasharray:none;stroke-opacity:1">Echo</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';display:none;fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round"
+       x="356.38455"
+       y="256.30685"
+       id="text1-9"
+       inkscape:label="blue-e"><tspan
+         sodipodi:role="line"
+         x="356.38455"
+         y="256.30685"
+         style="fill:#2693ff;fill-opacity:1;stroke-width:3.10754"
+         id="tspan2">e</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';display:none;fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round"
+       x="59.119583"
+       y="256.31982"
+       id="text1-1"
+       inkscape:label="blue-A"><tspan
+         sodipodi:role="line"
+         id="tspan1-8"
+         x="59.119583"
+         y="256.31982"
+         style="fill:#2693ff;fill-opacity:1;stroke-width:3.10754">A</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';display:none;opacity:1;fill:#2693ff;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round"
+       x="404.66772"
+       y="321.54398"
+       id="text1-4-2-4"
+       inkscape:label="blue-o"><tspan
+         sodipodi:role="line"
+         id="tspan1-5-1-3"
+         x="404.66772"
+         y="321.54398"
+         style="fill:#2693ff;fill-opacity:1;stroke-width:3.10754">o</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';fill:#000000;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round"
+       x="65.114082"
+       y="256.38199"
+       id="text1"><tspan
+         sodipodi:role="line"
+         id="tspan1"
+         x="65.114082"
+         y="256.38199"
+         style="stroke-width:3.10754">Adaptive</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-weight:bold;font-size:74.6879px;font-family:'Century Gothic';-inkscape-font-specification:'Century Gothic, Bold';fill:#000000;fill-opacity:1;stroke:none;stroke-width:3.10754;stroke-linecap:round;stroke-opacity:1"
+       x="267.42041"
+       y="321.56232"
+       id="text1-4"><tspan
+         sodipodi:role="line"
+         id="tspan1-5"
+         x="267.42041"
+         y="321.56232"
+         style="stroke:none;stroke-width:3.10754;stroke-opacity:1">Echo</tspan></text>
+  </g>
+</svg>
