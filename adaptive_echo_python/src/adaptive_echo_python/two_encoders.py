@@ -262,3 +262,28 @@ class TwoEncoders(nn.Module):
         normalized_audio = self.normalize_vector(audio_embedding)
 
         return self.audio_embedding_to_settings(normalized_audio)
+
+    def reconstruct_setting_genetic(self, audio_input, time,
+                                    population_size=100,
+                                    generations=50,
+                                    mutation_rate=0.1,
+                                    elite_size=5):
+        self.eval()
+
+        # compute target embedding
+        with torch.no_grad():
+            target_embedding = self.audio_encoder(self.preprocess_audio(audio_input))
+            target_embedding = self.normalize_vector(target_embedding)
+
+        # initialize population
+        with torch.no_grad():
+            predicted_settings = self.predict_settings(audio_input)
+            num_settings = predicted_settings.shape[1]
+            population = torch.rand((population_size, num_settings))
+            population[0] = predicted_settings.squeeze(0)
+
+        for gen in range(generations):
+            pass
+
+        best_settings = population[0].unsqueeze(0)
+        return best_settings
