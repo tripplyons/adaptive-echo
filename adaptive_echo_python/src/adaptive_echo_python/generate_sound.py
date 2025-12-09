@@ -14,7 +14,8 @@ def generate_sound():
     time = torch.linspace(0, num_seconds, num_samples, device=device)
     target_audio = torch.sin(2 * torch.pi * time * 440).unsqueeze(0)
     print(target_audio.shape, time.shape)
-    settings = two_encoders.reconstruct_settings(target_audio, time)
+    # settings = two_encoders.reconstruct_settings(target_audio, time) # <- this is for gradient descent
+    settings = two_encoders.reconstruct_settings_genetic(target_audio, time) # <- this is for genetic reconstruction
     with torch.inference_mode():
         eval_time = torch.linspace(0, num_seconds, num_seconds * 48000, device=device)
         eval_audio = synth_parallel(settings, eval_time)

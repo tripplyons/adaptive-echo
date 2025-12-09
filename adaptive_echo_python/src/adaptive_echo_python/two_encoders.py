@@ -263,12 +263,14 @@ class TwoEncoders(nn.Module):
 
         return self.audio_embedding_to_settings(normalized_audio)
 
-    def reconstruct_setting_genetic(self, audio_input, time,
+    def reconstruct_settings_genetic(self, audio_input, time,
                                     population_size=100,
                                     generations=50,
                                     mutation_rate=0.1,
                                     elite_size=5):
         self.eval()
+
+        device = audio_input.device
 
         # compute target embedding
         with torch.no_grad():
@@ -279,7 +281,7 @@ class TwoEncoders(nn.Module):
         with torch.no_grad():
             predicted_settings = self.predict_settings(audio_input)
             num_settings = predicted_settings.shape[1]
-            population = torch.rand((population_size, num_settings))
+            population = torch.rand((population_size, num_settings), device=device)
             population[0] = predicted_settings.squeeze(0)
 
         for gen in range(generations):
@@ -314,12 +316,12 @@ class TwoEncoders(nn.Module):
                 num_children = population_size - elite_size
 
                 # select randomly from top 50%
-                parents_indices = torch.randint(0, population_size // 2, (num_children, 2))
+                parents_indices = torch.randint(0, population_size // 2, (num_children, 2), device=device)
                 parent_a = population[parents_indices[:,0]]
                 parent_b = population[parents_indices[:,1]]
 
                 # crossover
-                mask = torch.rand((num_children, num_settings)) < 0.5
+                mask = torch.rand((num_children, num_settings), device=device) < 0.5
                 children = torch.where(mask, parent_a, parent_b)
 
                 # mutation
