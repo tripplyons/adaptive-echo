@@ -1,4 +1,3 @@
-from tkinter import W
 import wave
 import numpy as np
 # Writes the data to the file
