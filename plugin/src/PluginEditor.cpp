@@ -6,7 +6,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
       midiKeyboard(processor.getMidiKeyboardState(),
                    juce::MidiKeyboardComponent::horizontalKeyboard) {
     setResizable(true, true);
-    setSize(500, 220);
+    setSize(500, 300);
 
     // Volume slider
     volumeSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -25,7 +25,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
 
     attackLabel.setJustificationType(juce::Justification::centred);
     attackLabel.setText("attack", juce::dontSendNotification);
-
+    
     addAndMakeVisible(attackSlider);
     addAndMakeVisible(attackLabel);
 
@@ -59,7 +59,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     addAndMakeVisible(releaseSlider);
     addAndMakeVisible(releaseLabel);
 
-    // Oscillator
+    // Oscillator parameters
     harshnessSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     harshnessSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
     harshnessSlider.setRange(0.1, 50.0, 0.0);
@@ -97,6 +97,14 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
 
     addAndMakeVisible(midiKeyboard);
     midiKeyboard.setAvailableRange(24, 108);
+
+    oscView = std::make_unique<OscillatorVisualizer>(processor.osc);
+    if (oscView) {
+        addAndMakeVisible(*oscView);
+        oscVisible = true;
+    } else {
+        oscVisible = false;
+    }
 }
 
 void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
@@ -107,19 +115,27 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
     g.drawFittedText("Adaptive Echo - Sine Generator Example (w/ MIDI)",
                      getLocalBounds().reduced(10, 6),
                      juce::Justification::centredTop, 1);
+
+    if (oscView && !oscVisible) {
+        oscView->update();
+        oscView->repaint();
+    }
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
     auto bounds = getLocalBounds().reduced(12);
+
     midiKeyboard.setBounds(bounds.removeFromBottom(100).reduced(4));
 
-    // auto header = bounds.removeFromTop(34);
     bounds.removeFromTop(34);
-    auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
-    int sliderWidth = bounds.getWidth() / 7; // one for volume + 4 ADSR + 2 osc
-
+    auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 240);
+    if (oscView)
+        oscView->setBounds(row.removeFromTop(120).reduced(4));
     auto controlArea = row.removeFromTop(120);
+
+    int sliderWidth = controlArea.getWidth() / 7;
+
     volumeSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
     volumeLabel.setBounds(volumeSlider.getX(), volumeSlider.getBottom(),
                           volumeSlider.getWidth(), 20);
@@ -142,9 +158,11 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
 
     warmthSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
     warmthLabel.setBounds(warmthSlider.getX(), warmthSlider.getBottom(),
-                           warmthSlider.getWidth(), 20);
+                          warmthSlider.getWidth(), 20);
 
-    harshnessSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
-    harshnessLabel.setBounds(harshnessSlider.getX(), harshnessSlider.getBottom(),
-                           harshnessSlider.getWidth(), 20);
+    harshnessSlider.setBounds(
+        controlArea.removeFromLeft(sliderWidth).reduced(4));
+    harshnessLabel.setBounds(harshnessSlider.getX(),
+                             harshnessSlider.getBottom(),
+                             harshnessSlider.getWidth(), 20);
 }

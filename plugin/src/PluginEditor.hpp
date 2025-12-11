@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PluginProcessor.hpp"
+#include "OscillatorVisualizer.hpp"
+#include <JuceHeader.h>
 #include <JuceHeader.h>
 
 class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
@@ -35,6 +37,8 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Label warmthLabel;
     juce::Label harshnessLabel;
 
+    std::unique_ptr<OscillatorVisualizer> oscView;
+
     juce::MidiKeyboardComponent midiKeyboard{
         processor.getMidiKeyboardState(),
         juce::MidiKeyboardComponent::horizontalKeyboard};
@@ -51,4 +55,6 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
         AdaptiveEchoAudioProcessorEditor)
+
+    bool oscVisible;
 };

@@ -111,8 +111,6 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         new_w = sParam->load();
     if (auto *rParam = apvts.getRawParameterValue("harshness"))
         new_h = rParam->load();
-
-    std::cout << "Warmth: " << new_w <<"\nHarshness: " << new_h << std::endl;
  
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
