@@ -28,6 +28,13 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Label sustainLabel;
     juce::Label releaseLabel;
 
+    // Oscillator
+    juce::Slider warmthSlider;
+    juce::Slider harshnessSlider;
+
+    juce::Label warmthLabel;
+    juce::Label harshnessLabel;
+
     juce::MidiKeyboardComponent midiKeyboard{
         processor.getMidiKeyboardState(),
         juce::MidiKeyboardComponent::horizontalKeyboard};
@@ -39,6 +46,8 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     std::unique_ptr<SliderAttachment> decayAttachment;
     std::unique_ptr<SliderAttachment> sustainAttachment;
     std::unique_ptr<SliderAttachment> releaseAttachment;
+    std::unique_ptr<SliderAttachment> warmthAttachment;
+    std::unique_ptr<SliderAttachment> harshnessAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(
         AdaptiveEchoAudioProcessorEditor)

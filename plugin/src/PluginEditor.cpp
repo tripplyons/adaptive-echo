@@ -59,6 +59,27 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     addAndMakeVisible(releaseSlider);
     addAndMakeVisible(releaseLabel);
 
+    // Oscillator
+    harshnessSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    harshnessSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    harshnessSlider.setRange(0.1, 50.0, 0.0);
+
+    harshnessLabel.setJustificationType(juce::Justification::centred);
+    harshnessLabel.setText("Harshness", juce::dontSendNotification);
+
+    addAndMakeVisible(harshnessSlider);
+    addAndMakeVisible(harshnessLabel);
+
+    warmthSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    warmthSlider.setTextBoxStyle(juce::Slider::TextBoxAbove, false, 60, 20);
+    warmthSlider.setRange(0.0, 20.0, 0.0);
+
+    warmthLabel.setJustificationType(juce::Justification::centred);
+    warmthLabel.setText("Warmth", juce::dontSendNotification);
+
+    addAndMakeVisible(warmthSlider);
+    addAndMakeVisible(warmthLabel);
+
     volumeAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "volume", volumeSlider);
     attackAttachment = std::make_unique<SliderAttachment>(
@@ -69,6 +90,10 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
         processor.apvts, "sustain", sustainSlider);
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "release", releaseSlider);
+    warmthAttachment = std::make_unique<SliderAttachment>(
+        processor.apvts, "warmth", warmthSlider);
+    harshnessAttachment = std::make_unique<SliderAttachment>(
+        processor.apvts, "harshness", harshnessSlider);
 
     addAndMakeVisible(midiKeyboard);
     midiKeyboard.setAvailableRange(24, 108);
@@ -92,7 +117,7 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     bounds.removeFromTop(34);
     auto row = bounds.withSizeKeepingCentre(bounds.getWidth(), 120);
 
-    int sliderWidth = bounds.getWidth() / 5; // one for volume + 4 ADSR
+    int sliderWidth = bounds.getWidth() / 7; // one for volume + 4 ADSR + 2 osc
 
     auto controlArea = row.removeFromTop(120);
     volumeSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
@@ -114,4 +139,12 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     releaseSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
     releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
                            releaseSlider.getWidth(), 20);
+
+    warmthSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    warmthLabel.setBounds(warmthSlider.getX(), warmthSlider.getBottom(),
+                           warmthSlider.getWidth(), 20);
+
+    harshnessSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
+    harshnessLabel.setBounds(harshnessSlider.getX(), harshnessSlider.getBottom(),
+                           harshnessSlider.getWidth(), 20);
 }

@@ -54,6 +54,8 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
         return midiState;
     }
 
+    WavetableOscillator osc;
+
   private:
     // Simple sine generator state per channel
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
@@ -62,7 +64,6 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     Note activeNote;
     ADSREnvelope env;
     std::shared_ptr<ADSREnvelope> env_ptr;
-    WavetableOscillator osc;
 
     // Smoothed volume to avoid zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>
@@ -71,7 +72,7 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
         noteAmpSmoothed;
     juce::MidiKeyboardState midiState;
 
-    float a, d, s, r, ac, dc, rc;
+    float a, d, s, r, ac, dc, rc, w, h;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessor)
 };

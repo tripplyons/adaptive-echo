@@ -30,6 +30,12 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", ADSRrange, 0.5f));
 
+    // Oscillator
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "harshness", "Harshness", juce::NormalisableRange<float>(0.1f, 50.0f, 0.01f, 0.3f), 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "warmth", "Warmth", juce::NormalisableRange<float>(0.1f, 20.0f, 0.01f, 0.3f), 0.5f));
+
     return {params.begin(), params.end()};
 }
 
@@ -55,8 +61,8 @@ void AdaptiveEchoAudioProcessor::prepareToPlay(double sampleRate,
     ac = dc = rc = 1.0f;
 
     // Oscillator parameters
-    float w = 21.1;
-    float h = 0.1;
+    w = 1.0;
+    h = 1.0;
 
     env = ADSREnvelope(a, d, s, r, ac, dc, rc,
                        static_cast<int>(currentSampleRate));
@@ -89,6 +95,9 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     float new_s = s;
     float new_r = r;
 
+    float new_h = h;
+    float new_w = w;
+
     if (auto *aParam = apvts.getRawParameterValue("attack"))
         new_a = aParam->load();
     if (auto *dParam = apvts.getRawParameterValue("decay"))
@@ -98,6 +107,13 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     if (auto *rParam = apvts.getRawParameterValue("release"))
         new_r = rParam->load();
 
+    if (auto *sParam = apvts.getRawParameterValue("warmth"))
+        new_w = sParam->load();
+    if (auto *rParam = apvts.getRawParameterValue("harshness"))
+        new_h = rParam->load();
+
+    std::cout << "Warmth: " << new_w <<"\nHarshness: " << new_h << std::endl;
+ 
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
         a = new_a;
@@ -108,6 +124,14 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                            static_cast<int>(currentSampleRate));
         env_ptr = std::make_shared<ADSREnvelope>(env);
         activeNote.set_env(env_ptr);
+    }
+
+    // Update oscillator parameters
+    if (new_w != w || new_h != h) {
+        w = new_w;
+        h = new_h;
+        osc.updateParameters(w, h);
+        std::cout << "Updated" << std::endl;
     }
 
     // Update global volume target
@@ -144,14 +168,11 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                 float globalVol = volumeSmoothed.getNextValue();
 
                 float amp = noteLevel * globalVol;
-                out[n] = std::sin(ph) * amp;
-                //out[n] = osc.sample(ph) * amp;
+                out[n] = osc.sample(ph) * amp;
 
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)
                     ph -= juce::MathConstants<double>::twoPi;
-
-                std::cout << out[n] << std::endl;
             } else {
                 out[n] = 0.0f;
                 (void)volumeSmoothed.getNextValue();

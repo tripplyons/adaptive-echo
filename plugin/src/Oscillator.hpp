@@ -7,10 +7,16 @@ public:
 
     WavetableOscillator() = default;
 
+    void updateParameters(float warmth, float harshness) {
+        this->harshness = harshness;
+        this->warmth = warmth;
+    }
+
     float sample(float ph) noexcept {
-        float x = modf(ph, 1.0);
+        float ph01 = ph * (1.0f / (2.0f * M_PI)); // Convert from radians to 0-1
+        float x = ph01 - floor(ph01);
         float p = ((std::pow(x, warmth)-std::pow(1-x, warmth))/2);
-        float f = std::sin(p);
+        float f = std::sin(p * 2 * M_PI);
         return std::pow(std::abs(f), harshness) * sign(f);
     }
 
