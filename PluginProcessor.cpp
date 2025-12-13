@@ -197,8 +197,22 @@ void AdaptiveEchoAudioProcessor::loadFile(const juce::File& f)
     formatManager.registerBasicFormats();
 
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(f));
-    if (!reader)
+    /* Adding a debug message here. Right now we are able to load wav files,
+     * but not able to load mp3 files. More specifically, our program will load the waveform from a wav file
+     * and print the first few samples; but for mp3 files, we do not print any samples;
+     * the reason for that is JUCE does not have an MP3 decoder available, at least on Linux systems.
+     * Therefore: reader is nullptr, loadFile() exits early, audioBuffer is never set, and loadedSamples remains empty
+     * */
+    if (!reader) {
+	// DBG("Could not create reader for file: " + f.getFullPathName());
+	juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon,
+        "Unsupported Audio Format",
+        "This plugin supports WAV and AIFF files only.\n\n"
+        "MP3 decoding is not available on this system."
+        );
         return;
+    }
 
     auto tempBuffer = std::make_shared<juce::AudioBuffer<float>>(reader->numChannels, (int)reader->lengthInSamples);
     reader->read(tempBuffer.get(), 0, (int)reader->lengthInSamples, 0, true, true);
