@@ -30,9 +30,15 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", ADSRrange, 0.5f));
 
+    // Oscillator type
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
-    "oscType", "Oscillator Type",
-    juce::StringArray{"Sine", "Square", "Saw"}, 0)); // default = Sine
+        "oscType", "Oscillator Type",
+        juce::StringArray{"Sine", "Square", "Saw"}, 0));
+
+    // Sound category
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "soundCategory", "Sound Category",
+        juce::StringArray{"Happy", "Harsh", "Bright", "Dark"}, 0));
 
     return {params.begin(), params.end()};
 }
