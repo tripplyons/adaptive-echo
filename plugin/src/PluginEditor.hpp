@@ -28,6 +28,8 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Label sustainLabel;
     juce::Label releaseLabel;
 
+    juce::TextButton openFileButton { "Open File" };
+
     juce::MidiKeyboardComponent midiKeyboard{
         processor.getMidiKeyboardState(),
         juce::MidiKeyboardComponent::horizontalKeyboard};

@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <vector>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include "Note.hpp"
 #include "PluginEnvelope.hpp"
@@ -53,6 +54,11 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
         return midiState;
     }
 
+    void loadFile(const juce::File& f);
+    std::vector<double> loadedSamples;
+    // audio callback
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill);
+
   private:
     // Simple sine generator state per channel
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
@@ -61,6 +67,7 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     Note activeNote;
     ADSREnvelope env;
     std::shared_ptr<ADSREnvelope> env_ptr;
+    std::shared_ptr<juce::AudioBuffer<float>> audioBuffer;
 
     // Smoothed volume to avoid zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>

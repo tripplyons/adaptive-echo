@@ -190,3 +190,70 @@ juce::AudioProcessorEditor *AdaptiveEchoAudioProcessor::createEditor() {
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
     return new AdaptiveEchoAudioProcessor();
 }
+
+void AdaptiveEchoAudioProcessor::loadFile(const juce::File& f)
+{
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(f));
+    /* Adding a debug message here. Right now we are able to load wav files,
+     * but not able to load mp3 files. More specifically, our program will load the waveform from a wav file
+     * and print the first few samples; but for mp3 files, we do not print any samples;
+     * the reason for that is JUCE does not have an MP3 decoder available, at least on Linux systems.
+     * Therefore: reader is nullptr, loadFile() exits early, audioBuffer is never set, and loadedSamples remains empty
+     * */
+    if (!reader) {
+	// DBG("Could not create reader for file: " + f.getFullPathName());
+	juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon,
+        "Unsupported Audio Format",
+        "This plugin supports WAV and AIFF files only.\n\n"
+        "MP3 decoding is not available on this system."
+        );
+        return;
+    }
+
+    auto tempBuffer = std::make_shared<juce::AudioBuffer<float>>(reader->numChannels, (int)reader->lengthInSamples);
+    reader->read(tempBuffer.get(), 0, (int)reader->lengthInSamples, 0, true, true);
+    audioBuffer = tempBuffer;
+
+    // Populate loadedSamples for GUI display
+    loadedSamples.clear();
+    if (audioBuffer)
+    {
+        auto& buf = *audioBuffer;
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        {
+            auto* ptr = buf.getReadPointer(ch);
+            loadedSamples.insert(loadedSamples.end(), ptr, ptr + buf.getNumSamples());
+        }
+    }
+
+    DBG(juce::String::formatted("Loaded %d samples from %d channels",
+                                (int)reader->lengthInSamples,
+                                reader->numChannels));
+}
+
+void AdaptiveEchoAudioProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
+{
+    if (!audioBuffer)
+    {
+        bufferToFill.clearActiveBufferRegion();
+        return;
+    }
+
+    const auto& buf = *audioBuffer; // Dereference shared_ptr
+
+    int numChannels = std::min(bufferToFill.buffer->getNumChannels(), buf.getNumChannels());
+    int numSamples  = std::min(bufferToFill.buffer->getNumSamples(), buf.getNumSamples());
+
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        auto* dst = bufferToFill.buffer->getWritePointer(ch);
+        const float* src = buf.getReadPointer(ch);
+
+        for (int i = 0; i < numSamples; ++i)
+            dst[i] = src[i];
+    }
+}
