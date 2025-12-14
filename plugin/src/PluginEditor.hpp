@@ -27,6 +27,8 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Label decayLabel;
     juce::Label sustainLabel;
     juce::Label releaseLabel;
+    juce::ComboBox oscTypeBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oscTypeAttachment;
 
     juce::TextButton openFileButton { "Open File" };
 

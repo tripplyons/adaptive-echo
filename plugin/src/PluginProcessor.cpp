@@ -30,6 +30,10 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", ADSRrange, 0.5f));
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+    "oscType", "Oscillator Type",
+    juce::StringArray{"Sine", "Square", "Saw"}, 0)); // default = Sine
+
     return {params.begin(), params.end()};
 }
 
@@ -93,6 +97,10 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     if (auto *rParam = apvts.getRawParameterValue("release"))
         new_r = rParam->load();
 
+    int oscType = 0;
+    if (auto* param = apvts.getRawParameterValue("oscType"))
+        oscType = static_cast<int>(param->load());
+
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
         a = new_a;
@@ -139,7 +147,19 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                 float globalVol = volumeSmoothed.getNextValue();
 
                 float amp = noteLevel * globalVol;
-                out[n] = std::sin(ph) * amp;
+		float value = 0.0f;
+                switch (oscType) {
+                    case 0: // Sine
+                        value = std::sin(ph);
+                        break;
+                    case 1: // Square
+                        value = (std::sin(ph) >= 0.0 ? 1.0f : -1.0f);
+                        break;
+                    case 2: // Saw
+                        value = 2.0f * (ph / juce::MathConstants<double>::twoPi) - 1.0f;
+                        break;
+                }
+                out[n] = value * amp;
 
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)

@@ -71,6 +71,16 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "release", releaseSlider);
 
+    // Oscillator type combo box
+    oscTypeBox.addItem("Sine", 1);
+    oscTypeBox.addItem("Square", 2);
+    oscTypeBox.addItem("Saw", 3);
+    addAndMakeVisible(oscTypeBox);
+
+    // Attach to processor parameter
+    oscTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+    processor.apvts, "oscType", oscTypeBox);
+
     addAndMakeVisible (openFileButton);
 
     openFileButton.onClick = [this]
@@ -156,5 +166,8 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
                            releaseSlider.getWidth(), 20);
 
-    openFileButton.setBounds (10, 10, 120, 24);
+    auto oscRow = bounds.removeFromTop(40);
+    oscTypeBox.setBounds(oscRow.removeFromLeft(150).reduced(4));
+
+    openFileButton.setBounds(10, 10, 120, 24);
 }
