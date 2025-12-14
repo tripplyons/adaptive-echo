@@ -78,8 +78,18 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     addAndMakeVisible(oscTypeBox);
 
     // Attach to processor parameter
-    oscTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-    processor.apvts, "oscType", oscTypeBox);
+    oscTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.apvts, "oscType", oscTypeBox);
+
+    // Sound category combo box
+    soundCategoryBox.addItem("Happy", 1);
+    soundCategoryBox.addItem("Harsh", 2);
+    soundCategoryBox.addItem("Bright", 3);
+    soundCategoryBox.addItem("Dark", 4);
+    addAndMakeVisible(soundCategoryBox);
+
+    // Attach to processor parameter
+    soundCategoryAttachment =
+    std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.apvts, "soundCategory", soundCategoryBox);
 
     addAndMakeVisible (openFileButton);
 
@@ -168,4 +178,5 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
 
     openFileButton.setBounds(10, 10, 120, 24);
     oscTypeBox.setBounds(openFileButton.getRight() + 10, 10, 100, 24);
+    soundCategoryBox.setBounds(oscTypeBox.getRight() + 10, 10, 120, 24);
 }
