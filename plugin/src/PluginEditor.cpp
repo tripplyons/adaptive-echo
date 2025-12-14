@@ -166,8 +166,6 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
                            releaseSlider.getWidth(), 20);
 
-    auto oscRow = bounds.removeFromTop(40);
-    oscTypeBox.setBounds(oscRow.removeFromLeft(150).reduced(4));
-
     openFileButton.setBounds(10, 10, 120, 24);
+    oscTypeBox.setBounds(openFileButton.getRight() + 10, 10, 100, 24);
 }
