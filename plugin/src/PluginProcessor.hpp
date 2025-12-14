@@ -60,6 +60,11 @@ class AdaptiveEchoAudioProcessor : public juce::AudioProcessor {
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill);
 
   private:
+    void applySoundCategory(
+        int category,
+        float& a, float& d, float& s, float& r,
+        int& oscType
+    );
     // Simple sine generator state per channel
     std::array<double, 2> phase{0.0, 0.0}; // support up to stereo
     double phaseInc = 0.0;                 // radians per sample

@@ -82,6 +82,47 @@ bool AdaptiveEchoAudioProcessor::isBusesLayoutSupported(
 }
 #endif
 
+void AdaptiveEchoAudioProcessor::applySoundCategory(
+    int category,
+    float& a, float& d, float& s, float& r,
+    int& oscType)
+{
+    switch (category)
+    {
+        case 0: // Happy
+            a *= 0.6f;          // faster attack
+            d *= 0.7f;
+            s = std::max(s, 0.7f);
+            r *= 0.8f;
+            oscType = 0;        // Sine
+            break;
+
+        case 1: // Harsh
+            a *= 0.3f;
+            d *= 0.5f;
+            s = 1.0f;
+            r *= 1.2f;
+            oscType = 1;        // Square
+            break;
+
+        case 2: // Bright
+            a *= 0.5f;
+            d *= 0.8f;
+            oscType = 2;        // Saw
+            break;
+
+        case 3: // Dark
+            a *= 1.5f;
+            d *= 1.2f;
+            s *= 0.8f;
+            oscType = 0;        // Sine
+            break;
+
+        default:
+            break;
+    }
+}
+
 void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                               juce::MidiBuffer &midi) {
     juce::ScopedNoDenormals noDenormals;
@@ -111,32 +152,7 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     if (auto* param = apvts.getRawParameterValue("soundCategory"))
         soundCategory = static_cast<int>(param->load());
 
-    // Category influence (control-rate)
-    switch (soundCategory)
-    {
-        case 0: // Happy
-            new_a *= 0.6f;   // faster attack
-            new_d *= 0.7f;
-            new_s = juce::jlimit(0.6f, 1.0f, new_s + 0.2f);
-            oscType = 0;     // Sine
-            break;
-
-        case 1: // Harsh
-            new_a *= 0.2f;   // very fast attack
-            new_s *= 0.6f;
-            oscType = 1;     // Square
-            break;
-
-        case 2: // Bright
-            oscType = 2;     // Saw
-            break;
-
-        case 3: // Dark
-            new_a *= 1.4f;   // slower attack
-            new_d *= 1.5f;
-            oscType = 0;     // Sine
-            break;
-    }
+    applySoundCategory(soundCategory, new_a, new_d, new_s, new_r, oscType);
 
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
