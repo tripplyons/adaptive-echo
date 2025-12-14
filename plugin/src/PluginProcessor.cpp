@@ -107,6 +107,37 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     if (auto* param = apvts.getRawParameterValue("oscType"))
         oscType = static_cast<int>(param->load());
 
+    int soundCategory = 0;
+    if (auto* param = apvts.getRawParameterValue("soundCategory"))
+        soundCategory = static_cast<int>(param->load());
+
+    // Category influence (control-rate)
+    switch (soundCategory)
+    {
+        case 0: // Happy
+            new_a *= 0.6f;   // faster attack
+            new_d *= 0.7f;
+            new_s = juce::jlimit(0.6f, 1.0f, new_s + 0.2f);
+            oscType = 0;     // Sine
+            break;
+
+        case 1: // Harsh
+            new_a *= 0.2f;   // very fast attack
+            new_s *= 0.6f;
+            oscType = 1;     // Square
+            break;
+
+        case 2: // Bright
+            oscType = 2;     // Saw
+            break;
+
+        case 3: // Dark
+            new_a *= 1.4f;   // slower attack
+            new_d *= 1.5f;
+            oscType = 0;     // Sine
+            break;
+    }
+
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
         a = new_a;
