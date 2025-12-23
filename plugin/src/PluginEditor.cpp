@@ -1,4 +1,5 @@
 #include "PluginEditor.hpp"
+#include "AudioFileLoader.hpp"
 
 AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     AdaptiveEchoAudioProcessor &p)
@@ -70,18 +71,78 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     releaseAttachment = std::make_unique<SliderAttachment>(
         processor.apvts, "release", releaseSlider);
 
+    // Oscillator type combo box
+    oscTypeBox.addItem("Sine", 1);
+    oscTypeBox.addItem("Square", 2);
+    oscTypeBox.addItem("Saw", 3);
+    addAndMakeVisible(oscTypeBox);
+
+    // Attach to processor parameter
+    oscTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.apvts, "oscType", oscTypeBox);
+
+    // Sound category combo box
+    soundCategoryBox.addItem("Happy", 1);
+    soundCategoryBox.addItem("Harsh", 2);
+    soundCategoryBox.addItem("Bright", 3);
+    soundCategoryBox.addItem("Dark", 4);
+    addAndMakeVisible(soundCategoryBox);
+
+    // Attach to processor parameter
+    soundCategoryAttachment =
+    std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.apvts, "soundCategory", soundCategoryBox);
+
+    addAndMakeVisible (openFileButton);
+
+    openFileButton.onClick = [this]
+    {
+	auto chooser = std::make_shared<juce::FileChooser>(
+            "Select an audio file",
+            juce::File{},
+            "*.wav;*.aiff;*.mp3"
+        );
+
+        chooser->launchAsync (
+            juce::FileBrowserComponent::openMode
+            | juce::FileBrowserComponent::canSelectFiles,
+	    [this, chooser] (const juce::FileChooser& fc)
+            {
+		auto file = fc.getResult();
+	        if (! file.existsAsFile())
+                    return;
+	        processor.loadFile (file);
+		repaint(); // forces paint() to update with new sample text
+            }
+        );
+    };
+
     addAndMakeVisible(midiKeyboard);
     midiKeyboard.setAvailableRange(24, 108);
 }
 
 void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics &g) {
-    g.fillAll(
-        getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
     g.setColour(juce::Colours::white);
     g.setFont(16.0f);
     g.drawFittedText("Adaptive Echo - Sine Generator Example (w/ MIDI)",
                      getLocalBounds().reduced(10, 6),
                      juce::Justification::centredTop, 1);
+
+    // Only display first 10 samples
+    g.setFont(14.0f);
+    auto y = 50;
+    g.drawText("First 10 samples:", 10, y, 400, 20, juce::Justification::left);
+    y += 20;
+
+    juce::String s;
+    int numToShow = std::min(10, (int)processor.loadedSamples.size());
+    for (int i = 0; i < numToShow; ++i)
+        s += juce::String(processor.loadedSamples[i], 5) + "  ";
+    g.drawText(s, 10, y, 400, 20, juce::Justification::left);
+
+    // Debug: print a few samples to console only, NOT all
+    int numToPrint = std::min(1000, (int)processor.loadedSamples.size());
+    for (int i = 0; i < numToPrint; ++i)
+        DBG("Sample " << i << ": " << processor.loadedSamples[i]);
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
@@ -114,4 +175,8 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     releaseSlider.setBounds(controlArea.removeFromLeft(sliderWidth).reduced(4));
     releaseLabel.setBounds(releaseSlider.getX(), releaseSlider.getBottom(),
                            releaseSlider.getWidth(), 20);
+
+    openFileButton.setBounds(10, 10, 120, 24);
+    oscTypeBox.setBounds(openFileButton.getRight() + 10, 10, 100, 24);
+    soundCategoryBox.setBounds(oscTypeBox.getRight() + 10, 10, 120, 24);
 }

@@ -11,13 +11,13 @@ class EnvelopeGenerator {
         float initialValue;
         float finalValue;
         float curvature;
-        unsigned int lengthSamples; // 0 for sustain
+        int lengthSamples; // 0 for sustain
 
         Segment(float iv, float fv, float c, unsigned int l)
             : initialValue(iv), finalValue(fv), curvature(c), lengthSamples(l) {
         }
 
-        float fx(unsigned int x) const {
+        float fx(int x) const {
             if (lengthSamples == 0)
                 return finalValue; // sustain
             if (x > lengthSamples)

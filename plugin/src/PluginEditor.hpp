@@ -27,6 +27,12 @@ class AdaptiveEchoAudioProcessorEditor : public juce::AudioProcessorEditor {
     juce::Label decayLabel;
     juce::Label sustainLabel;
     juce::Label releaseLabel;
+    juce::ComboBox oscTypeBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> oscTypeAttachment;
+    juce::ComboBox soundCategoryBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> soundCategoryAttachment;
+
+    juce::TextButton openFileButton { "Open File" };
 
     juce::MidiKeyboardComponent midiKeyboard{
         processor.getMidiKeyboardState(),

@@ -30,6 +30,16 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", ADSRrange, 0.5f));
 
+    // Oscillator type
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "oscType", "Oscillator Type",
+        juce::StringArray{"Sine", "Square", "Saw"}, 0));
+
+    // Sound category
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        "soundCategory", "Sound Category",
+        juce::StringArray{"Happy", "Harsh", "Bright", "Dark"}, 0));
+
     return {params.begin(), params.end()};
 }
 
@@ -72,6 +82,47 @@ bool AdaptiveEchoAudioProcessor::isBusesLayoutSupported(
 }
 #endif
 
+void AdaptiveEchoAudioProcessor::applySoundCategory(
+    int category,
+    float& a, float& d, float& s, float& r,
+    int& oscType)
+{
+    switch (category)
+    {
+        case 0: // Happy
+            a *= 0.6f;          // faster attack
+            d *= 0.7f;
+            s = std::max(s, 0.7f);
+            r *= 0.8f;
+            oscType = 0;        // Sine
+            break;
+
+        case 1: // Harsh
+            a *= 0.3f;
+            d *= 0.5f;
+            s = 1.0f;
+            r *= 1.2f;
+            oscType = 1;        // Square
+            break;
+
+        case 2: // Bright
+            a *= 0.5f;
+            d *= 0.8f;
+            oscType = 2;        // Saw
+            break;
+
+        case 3: // Dark
+            a *= 1.5f;
+            d *= 1.2f;
+            s *= 0.8f;
+            oscType = 0;        // Sine
+            break;
+
+        default:
+            break;
+    }
+}
+
 void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                               juce::MidiBuffer &midi) {
     juce::ScopedNoDenormals noDenormals;
@@ -92,6 +143,16 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
         new_s = sParam->load();
     if (auto *rParam = apvts.getRawParameterValue("release"))
         new_r = rParam->load();
+
+    int oscType = 0;
+    if (auto* param = apvts.getRawParameterValue("oscType"))
+        oscType = static_cast<int>(param->load());
+
+    int soundCategory = 0;
+    if (auto* param = apvts.getRawParameterValue("soundCategory"))
+        soundCategory = static_cast<int>(param->load());
+
+    applySoundCategory(soundCategory, new_a, new_d, new_s, new_r, oscType);
 
     // Update ADSR parameters
     if (new_a != a || new_d != d || new_s != s || new_r != r) {
@@ -139,7 +200,19 @@ void AdaptiveEchoAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                 float globalVol = volumeSmoothed.getNextValue();
 
                 float amp = noteLevel * globalVol;
-                out[n] = std::sin(ph) * amp;
+		float value = 0.0f;
+                switch (oscType) {
+                    case 0: // Sine
+                        value = std::sin(ph);
+                        break;
+                    case 1: // Square
+                        value = (std::sin(ph) >= 0.0 ? 1.0f : -1.0f);
+                        break;
+                    case 2: // Saw
+                        value = 2.0f * (ph / juce::MathConstants<double>::twoPi) - 1.0f;
+                        break;
+                }
+                out[n] = value * amp;
 
                 ph += phaseInc;
                 if (ph >= juce::MathConstants<double>::twoPi)
@@ -189,4 +262,71 @@ juce::AudioProcessorEditor *AdaptiveEchoAudioProcessor::createEditor() {
 // This factory must be present in the TU with the processor class.
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter() {
     return new AdaptiveEchoAudioProcessor();
+}
+
+void AdaptiveEchoAudioProcessor::loadFile(const juce::File& f)
+{
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(f));
+    /* Adding a debug message here. Right now we are able to load wav files,
+     * but not able to load mp3 files. More specifically, our program will load the waveform from a wav file
+     * and print the first few samples; but for mp3 files, we do not print any samples;
+     * the reason for that is JUCE does not have an MP3 decoder available, at least on Linux systems.
+     * Therefore: reader is nullptr, loadFile() exits early, audioBuffer is never set, and loadedSamples remains empty
+     * */
+    if (!reader) {
+	// DBG("Could not create reader for file: " + f.getFullPathName());
+	juce::AlertWindow::showMessageBoxAsync(
+        juce::AlertWindow::WarningIcon,
+        "Unsupported Audio Format",
+        "This plugin supports WAV and AIFF files only.\n\n"
+        "MP3 decoding is not available on this system."
+        );
+        return;
+    }
+
+    auto tempBuffer = std::make_shared<juce::AudioBuffer<float>>(reader->numChannels, (int)reader->lengthInSamples);
+    reader->read(tempBuffer.get(), 0, (int)reader->lengthInSamples, 0, true, true);
+    audioBuffer = tempBuffer;
+
+    // Populate loadedSamples for GUI display
+    loadedSamples.clear();
+    if (audioBuffer)
+    {
+        auto& buf = *audioBuffer;
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        {
+            auto* ptr = buf.getReadPointer(ch);
+            loadedSamples.insert(loadedSamples.end(), ptr, ptr + buf.getNumSamples());
+        }
+    }
+
+    DBG(juce::String::formatted("Loaded %d samples from %d channels",
+                                (int)reader->lengthInSamples,
+                                reader->numChannels));
+}
+
+void AdaptiveEchoAudioProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
+{
+    if (!audioBuffer)
+    {
+        bufferToFill.clearActiveBufferRegion();
+        return;
+    }
+
+    const auto& buf = *audioBuffer; // Dereference shared_ptr
+
+    int numChannels = std::min(bufferToFill.buffer->getNumChannels(), buf.getNumChannels());
+    int numSamples  = std::min(bufferToFill.buffer->getNumSamples(), buf.getNumSamples());
+
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        auto* dst = bufferToFill.buffer->getWritePointer(ch);
+        const float* src = buf.getReadPointer(ch);
+
+        for (int i = 0; i < numSamples; ++i)
+            dst[i] = src[i];
+    }
 }
