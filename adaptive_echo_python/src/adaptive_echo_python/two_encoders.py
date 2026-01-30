@@ -118,7 +118,7 @@ class TwoEncoders(nn.Module):
                 {"params": self.audio_reduction_encoder.parameters()},
                 {"params": self.audio_reduction_decoder.parameters()},
             ],
-            lr=3e-3,
+            lr=1e-3,
         )
         optimizer.train()
         for i in range(num_epochs):

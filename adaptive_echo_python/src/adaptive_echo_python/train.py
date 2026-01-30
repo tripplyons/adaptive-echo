@@ -8,16 +8,16 @@ from adaptive_echo_python.synth import Synth, synth_parallel
 from adaptive_echo_python.two_encoders import TwoEncoders
 
 num_seconds = 2
-training_sample_rate = 8192
+training_sample_rate = 16384
 num_samples = training_sample_rate * num_seconds
 settings_encoder_input_size = Synth().encode_settings().shape[0]
-reduced_audio_size = 2048
-encoder_embedding_size = 1024
-encoder_hidden_size = 1024
-encoder_num_layers = 4
-learning_rate = 3e-3
+reduced_audio_size = 8192
+encoder_embedding_size = 2048
+encoder_hidden_size = 2048
+encoder_num_layers = 2
+learning_rate = 1e-3
 gradient_clip_value = 10.0
-batch_size = 8192
+batch_size = 1024
 dataset_size = batch_size * 10
 evaluation_batch_size = 1000
 test_dataset_size = evaluation_batch_size * 5
