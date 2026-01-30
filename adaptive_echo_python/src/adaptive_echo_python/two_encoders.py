@@ -4,7 +4,7 @@ from schedulefree import RAdamScheduleFree
 from torch.nn import functional as F
 
 from adaptive_echo_python.encoder import Encoder
-from adaptive_echo_python.synth import synth_parallel, inverse_sigmoid
+from adaptive_echo_python.synth import inverse_sigmoid, synth_parallel
 
 
 class TwoEncoders(nn.Module):
@@ -151,7 +151,7 @@ class TwoEncoders(nn.Module):
         )
         settings_embedding = self.settings_encoder(settings_input)
 
-        return audio_embedding + settings_embedding
+        return audio_embedding, settings_embedding
 
     @torch.jit.export
     def loss(self, audio_input, settings_input):

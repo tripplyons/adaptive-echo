@@ -5,8 +5,10 @@ from adaptive_echo_python.two_encoders import TwoEncoders
 
 class TestTwoEncoders:
     def setup_method(self):
-        self.audio_input_size = 128
-        self.settings_input_size = 16
+        # Use sizes compatible with the model's STFT (n_fft=4096)
+        self.audio_input_size = 8192  # Must be >= n_fft (4096) for STFT
+        self.settings_input_size = 46  # Actual size from Synth.encode_settings()
+        self.reduced_audio_size = 128
         self.embedding_size = 64
         self.hidden_size = 256
         self.num_layers = 3
@@ -15,6 +17,7 @@ class TestTwoEncoders:
         self.model = TwoEncoders(
             audio_input_size=self.audio_input_size,
             settings_input_size=self.settings_input_size,
+            reduced_audio_size=self.reduced_audio_size,
             embedding_size=self.embedding_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
@@ -30,7 +33,8 @@ class TestTwoEncoders:
         assert isinstance(self.model.b, torch.nn.Parameter)
 
     def test_two_encoders_forward_basic(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # forward() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         audio_embedding, settings_embedding = self.model(audio_input, settings_input)
@@ -43,7 +47,8 @@ class TestTwoEncoders:
         assert torch.isfinite(settings_embedding).all()
 
     def test_two_encoders_forward_single_batch(self):
-        audio_input = torch.randn(1, self.audio_input_size)
+        # forward() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(1, self.reduced_audio_size)
         settings_input = torch.randn(1, self.settings_input_size)
 
         audio_embedding, settings_embedding = self.model(audio_input, settings_input)
@@ -53,7 +58,8 @@ class TestTwoEncoders:
 
     def test_two_encoders_forward_different_batch_sizes(self):
         for batch_size in [1, 2, 8, 16]:
-            audio_input = torch.randn(batch_size, self.audio_input_size)
+            # forward() expects preprocessed audio (reduced_audio_size)
+            audio_input = torch.randn(batch_size, self.reduced_audio_size)
             settings_input = torch.randn(batch_size, self.settings_input_size)
 
             audio_embedding, settings_embedding = self.model(
@@ -64,7 +70,8 @@ class TestTwoEncoders:
             assert settings_embedding.shape == (batch_size, self.embedding_size)
 
     def test_two_encoders_loss_basic(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # loss() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         loss = self.model.loss(audio_input, settings_input)
@@ -76,7 +83,8 @@ class TestTwoEncoders:
 
     def test_two_encoders_loss_different_batch_sizes(self):
         for batch_size in [1, 2, 8]:
-            audio_input = torch.randn(batch_size, self.audio_input_size)
+            # loss() expects preprocessed audio (reduced_audio_size)
+            audio_input = torch.randn(batch_size, self.reduced_audio_size)
             settings_input = torch.randn(batch_size, self.settings_input_size)
 
             loss = self.model.loss(audio_input, settings_input)
@@ -86,7 +94,8 @@ class TestTwoEncoders:
 
     def test_two_encoders_loss_gradients(self):
         self.model.zero_grad()
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # loss() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         loss = self.model.loss(audio_input, settings_input)
@@ -101,8 +110,8 @@ class TestTwoEncoders:
         assert params_with_grad > 0
 
     def test_two_encoders_hyperparameters(self):
-        assert self.model.log_t.item() == 3.0
-        assert self.model.b.item() == -10.0
+        assert self.model.log_t.item() == 3.5
+        assert self.model.b.item() == -14.0
 
         # Test that hyperparameters can be modified
         with torch.no_grad():
@@ -113,7 +122,8 @@ class TestTwoEncoders:
         assert abs(self.model.b.item() - (-5.0)) < 1e-6
 
     def test_two_encoders_forward_consistency(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # forward() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         self.model.eval()
@@ -125,7 +135,8 @@ class TestTwoEncoders:
         assert torch.allclose(settings_emb1, settings_emb2)
 
     def test_two_encoders_loss_consistency(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # loss() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         self.model.eval()
@@ -136,7 +147,8 @@ class TestTwoEncoders:
         assert torch.allclose(loss1, loss2)
 
     def test_two_encoders_embedding_normalization(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # forward() expects preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         audio_embedding, settings_embedding = self.model(audio_input, settings_input)
@@ -157,7 +169,8 @@ class TestTwoEncoders:
         )
 
     def test_two_encoders_device_compatibility(self):
-        audio_input = torch.randn(self.batch_size, self.audio_input_size)
+        # forward() and loss() expect preprocessed audio (reduced_audio_size)
+        audio_input = torch.randn(self.batch_size, self.reduced_audio_size)
         settings_input = torch.randn(self.batch_size, self.settings_input_size)
 
         if torch.cuda.is_available():
@@ -198,12 +211,14 @@ class TestTwoEncoders:
             model = TwoEncoders(
                 audio_input_size=self.audio_input_size,
                 settings_input_size=self.settings_input_size,
+                reduced_audio_size=self.reduced_audio_size,
                 embedding_size=config["embedding_size"],
                 hidden_size=config["hidden_size"],
                 num_layers=config["num_layers"],
             )
 
-            audio_input = torch.randn(2, self.audio_input_size)
+            # forward() and loss() expect preprocessed audio (reduced_audio_size)
+            audio_input = torch.randn(2, self.reduced_audio_size)
             settings_input = torch.randn(2, self.settings_input_size)
 
             audio_emb, settings_emb = model(audio_input, settings_input)
