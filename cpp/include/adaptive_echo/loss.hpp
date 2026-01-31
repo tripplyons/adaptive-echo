@@ -512,8 +512,7 @@ inline T zero_crossing_rate_fast(const std::vector<T>& x) {
  */
 template <typename T>
 inline T spectral_convergence_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag,
-                                   T y_mag_mean, const std::vector<T>& weights,
-                                   size_t num_freqs) {
+                                   T y_mag_mean, const std::vector<T>& weights, size_t num_freqs) {
     const size_t n = x_mag.size();
     if (n == 0 || num_freqs == 0) return static_cast<T>(0);
 
