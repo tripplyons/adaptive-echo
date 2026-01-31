@@ -2,7 +2,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from schedulefree import RAdamScheduleFree
+try:
+    from schedulefree import RAdamScheduleFree
+except ImportError:
+    RAdamScheduleFree = None
 
 from adaptive_echo_python.synth import Synth, synth_parallel
 from adaptive_echo_python.two_encoders import TwoEncoders

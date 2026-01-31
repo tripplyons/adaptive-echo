@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
-from schedulefree import RAdamScheduleFree
+try:
+    from schedulefree import RAdamScheduleFree
+except ImportError:
+    RAdamScheduleFree = None
 from torch.nn import functional as F
 
 from adaptive_echo_python.encoder import Encoder
