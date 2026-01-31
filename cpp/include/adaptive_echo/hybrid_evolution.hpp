@@ -12,6 +12,8 @@
 #include <random>
 #include <vector>
 
+#include "adaptive_echo/constants.hpp"
+
 namespace adaptive_echo {
 
 namespace detail {
@@ -42,7 +44,7 @@ inline HybridResult<T> run_hybrid_evolution(
     T crossover_rate_start = static_cast<T>(0.75), T crossover_rate_end = static_cast<T>(0.35),
     T mutation_rate = static_cast<T>(0.03), T mutation_sigma = static_cast<T>(0.06),
     T elite_fraction = static_cast<T>(0.1), T time_limit = static_cast<T>(-1)) {
-    constexpr int num_settings = 46;
+    const int num_settings = adaptive_echo::constants::NUM_SETTINGS;
 
     auto t_start_all = std::chrono::steady_clock::now();
     auto& rng = detail::get_hybrid_rng();

@@ -24,3 +24,8 @@
 - There are 2 settings controlling frequency modulation
 	- Start frequency modulation amount (float)
 	- End frequency modulation amount (float)
+- There are 4 settings for filters (indices 46-49):
+	- High-pass cutoff (float, 0-1 mapped to 20Hz-20kHz)
+	- High-pass slope (float, 0-1 mapped to 6-48 dB/octave)
+	- Low-pass cutoff (float, 0-1 mapped to 20Hz-20kHz)
+	- Low-pass slope (float, 0-1 mapped to 6-48 dB/octave)
