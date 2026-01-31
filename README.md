@@ -1,26 +1,49 @@
 # Adaptive Echo
 
-A fully differentiable synthesizer capable of learning from sounds
+A digital synthesizer capable of learning from sounds.
 
 ## Vision
 
-Adaptive Echo is a synthesizer audio plugin that can listen to a sound and recreate it using gradient descent and machine learning models. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
+Adaptive Echo is a synthesizer that can listen to a sound and recreate it using optimization techniques. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
 
-## PyTorch Models
+## Project Structure
 
-Folder: [adaptive_echo_python](adaptive_echo_python)
+- **[cpp/](cpp)**: The core C++ synthesizer engine and hybrid evolution optimizer. This is the primary implementation of the synthesizer DSP and the learning algorithm.
+- **[docs/](docs)**: Project documentation, including synthesizer settings and architectural details.
 
-The synthesizer and models are implemented in Python using PyTorch. They are exported to TorchScript format and used in the C++ audio plugin to avoid the need to include a Python environment with the plugin.
+## Getting Started (C++ Engine)
 
-See [Python README](adaptive_echo_python/README.md) for details.
+The core engine is located in the `cpp` directory. It uses CMake for building and requires a C++17 compliant compiler.
 
-## C++ Audio Plugin
+### Prerequisites
+- CMake 3.14+
+- C++17 compiler (GCC, Clang, or MSVC)
+- OpenMP (optional, for parallel optimization)
 
-Folder: [plugin](plugin)
+### Building
+You can use the provided build script:
+```bash
+cd cpp
+./build.sh
+```
 
-This is the main implementation of all features. It is a instrument plugin written in C++ using the JUCE framework.
+Or manually with CMake:
+```bash
+cd cpp
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make
+```
 
-See [Plugin README](plugin/README.md) for details.
+### Running the Optimizer
+```bash
+./generate_sound [target_audio.wav]
+```
+
+## Documentation
+
+See the [docs](docs/README.md) folder for more information:
+- [Synthesizer Settings](docs/synthesizer-settings.md)
 
 ## License
 
