@@ -1,0 +1,4 @@
+{
+  "setup-worktree-unix": "setup-worktree.sh",
+  "setup-worktree": "setup-worktree.sh"
+}
