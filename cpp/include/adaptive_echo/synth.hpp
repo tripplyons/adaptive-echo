@@ -308,19 +308,19 @@ inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vect
         result[i] = osc_a_scratch[i] * env_vol_a[i] + osc_b_scratch[i] * env_vol_b[i];
     }
 
-    // Apply filters if filter parameters are provided
-    if (settings.size() >= 50) {
-        // Map filter parameters from normalized [0,1] to actual ranges
-        adaptive_echo::FilterParameters<T> filter_params =
-            adaptive_echo::mapFilterParameters(settings, 46);
+    // Apply effects chain (Distortion -> Filters)
+    // Apply distortion first
+    adaptive_echo::applyDistortion(settings[50], result);
 
-        // Calculate sample rate from times
-        T sampleRate =
-            (n > 1) ? static_cast<T>(1.0) / (times[1] - times[0]) : static_cast<T>(44100.0);
+    // Map filter parameters from normalized [0,1] to actual ranges
+    adaptive_echo::FilterParameters<T> filter_params =
+        adaptive_echo::mapFilterParameters(settings, 46);
 
-        // Apply filters to the result
-        adaptive_echo::applyFilters(filter_params, result, sampleRate);
-    }
+    // Calculate sample rate from times
+    T sampleRate = (n > 1) ? static_cast<T>(1.0) / (times[1] - times[0]) : static_cast<T>(44100.0);
+
+    // Apply filters to the result
+    adaptive_echo::applyFilters(filter_params, result, sampleRate);
 
     return result;
 }

@@ -2,7 +2,6 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
-#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -176,8 +175,8 @@ int main(int argc, char* argv[]) {
     using namespace adaptive_echo::constants;
 
     std::string target_path;
-    int population_size = 64;
-    int num_iterations = 100;
+    int population_size = 200;
+    int num_iterations = 50;
     float stft_weight = 1.0f;
 
     for (int i = 1; i < argc; ++i) {

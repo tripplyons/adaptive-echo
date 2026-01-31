@@ -114,6 +114,24 @@ FilterParameters<T> mapFilterParameters(const std::vector<T>& settings, size_t b
     return params;
 }
 
+/**
+ * Apply a soft-clipping distortion effect.
+ * amount: Normalized [0, 1] parameter controlling the drive/gain.
+ */
+template <typename T>
+void applyDistortion(T amount, std::vector<T>& audio) {
+    if (amount <= 0.0) return;
+
+    // Map amount [0, 1] to gain [1, 20] for a noticeable effect
+    T gain = static_cast<T>(1.0) + amount * static_cast<T>(19.0);
+
+    for (size_t i = 0; i < audio.size(); ++i) {
+        T x = audio[i] * gain;
+        // Soft clipping using the algebraic approximation of tanh: x / (1 + |x|)
+        audio[i] = x / (static_cast<T>(1.0) + std::abs(x));
+    }
+}
+
 // Apply all filters to audio signal
 template <typename T>
 void applyFilters(const FilterParameters<T>& params, std::vector<T>& audio, T sampleRate) {

@@ -29,3 +29,5 @@
 	- High-pass slope (float, 0-1 mapped to 6-48 dB/octave)
 	- Low-pass cutoff (float, 0-1 mapped to 20Hz-20kHz)
 	- Low-pass slope (float, 0-1 mapped to 6-48 dB/octave)
+- There is 1 setting for distortion (index 50):
+	- Distortion amount (float, 0-1 controlling soft-clipping drive)
