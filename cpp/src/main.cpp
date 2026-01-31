@@ -335,8 +335,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Save to WAV file
-    if (WavWriter::write("eval_audio_de.wav", eval_audio, OUTPUT_SAMPLE_RATE)) {
-        std::cout << "Saved: eval_audio_de.wav" << std::endl;
+    if (WavWriter::write("output.wav", eval_audio, OUTPUT_SAMPLE_RATE)) {
+        std::cout << "Saved: output.wav" << std::endl;
     } else {
         std::cerr << "Error: Failed to write output file" << std::endl;
         return 1;
