@@ -31,7 +31,7 @@ def _stft_single(x: np.ndarray, win_length: int, hop_length: int, n_fft: int, wi
 _stft_batch = jax.vmap(_stft_single, in_axes=(0, None, None, None, None))
 
 
-@jax.jit(static_argnames=['fft_sizes', 'hop_sizes', 'sample_rate'])
+# @jax.jit(static_argnames=['fft_sizes', 'hop_sizes', 'sample_rate'])
 def fast_audio_loss_precomputed(
     generated: np.ndarray,
     target_stfts: Tuple[np.ndarray, ...],
