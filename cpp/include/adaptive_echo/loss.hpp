@@ -24,6 +24,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "adaptive_echo/constants.hpp"
+
 // SIMD intrinsics support
 #if defined(__AVX2__)
 #include <immintrin.h>
@@ -419,6 +421,49 @@ inline std::vector<T> stft_fast(const std::vector<T>& x, size_t win_length, size
 }
 
 /**
+ * Compute perceptual frequency weights (A-weighting + Mel-scale density).
+ * Used to give "fair weight" to each frequency in audio similarity loss.
+ */
+template <typename T>
+inline std::vector<T> compute_frequency_weights(size_t num_freqs, size_t n_fft, T sample_rate) {
+    std::vector<T> weights(num_freqs);
+    const T f_s = sample_rate;
+    const T n_f = static_cast<T>(n_fft);
+
+    for (size_t i = 0; i < num_freqs; ++i) {
+        T freq = static_cast<T>(i) * f_s / n_f;
+
+        // A-weighting approximation
+        T f2 = freq * freq;
+        T f4 = f2 * f2;
+        T c1 = static_cast<T>(12194.217 * 12194.217);
+        T c2 = static_cast<T>(20.601103 * 20.601103);
+        T c3 = static_cast<T>(107.65265 * 107.65265);
+        T c4 = static_cast<T>(737.86223 * 737.86223);
+
+        T num = c1 * f4;
+        T den = (f2 + c2) * std::sqrt((f2 + c3) * (f2 + c4)) * (f2 + c1);
+        T ra = num / (den + static_cast<T>(1e-8));
+
+        // Mel-scale slope to balance linear bin density
+        // dMel/df = 1 / (1 + f/700)
+        T mel_slope = static_cast<T>(1.0) / (static_cast<T>(1.0) + freq / static_cast<T>(700.0));
+
+        weights[i] = ra * mel_slope;
+    }
+
+    // Normalize weights to average 1.0 to maintain loss scale
+    T sum = 0;
+    for (T w : weights) sum += w;
+    T inv_mean = static_cast<T>(num_freqs) / (sum + static_cast<T>(1e-8));
+    for (size_t i = 0; i < num_freqs; ++i) {
+        weights[i] *= inv_mean;
+    }
+
+    return weights;
+}
+
+/**
  * Batch STFT computation - C++ equivalent of JAX vmap.
  * Processes multiple audio signals in parallel.
  */
@@ -463,46 +508,57 @@ inline T zero_crossing_rate_fast(const std::vector<T>& x) {
 }
 
 /**
- * Vectorized spectral convergence loss.
+ * Vectorized spectral convergence loss with frequency weighting.
  */
 template <typename T>
 inline T spectral_convergence_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag,
-                                   T y_mag_mean) {
+                                   T y_mag_mean, const std::vector<T>& weights,
+                                   size_t num_freqs) {
     const size_t n = x_mag.size();
-    if (n == 0) return static_cast<T>(0);
+    if (n == 0 || num_freqs == 0) return static_cast<T>(0);
 
     T inv_y_mean = static_cast<T>(1.0) / (y_mag_mean + static_cast<T>(1e-8));
+    size_t num_frames = n / num_freqs;
 
-    // Spectral convergence: mean(|y - x| / mean(y))
     T sc_loss = 0;
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* x_ptr = &x_mag[frame * num_freqs];
+        const T* y_ptr = &y_mag[frame * num_freqs];
 #if defined(HAS_OPENMP)
 #pragma omp simd reduction(+ : sc_loss)
 #endif
-    for (size_t i = 0; i < n; ++i) {
-        sc_loss += std::abs(y_mag[i] - x_mag[i]) * inv_y_mean;
+        for (size_t freq = 0; freq < num_freqs; ++freq) {
+            sc_loss += weights[freq] * std::abs(y_ptr[freq] - x_ptr[freq]) * inv_y_mean;
+        }
     }
 
     return sc_loss / static_cast<T>(n);
 }
 
 /**
- * Vectorized log-magnitude loss.
+ * Vectorized log-magnitude loss with frequency weighting.
  */
 template <typename T>
-inline T log_magnitude_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag) {
+inline T log_magnitude_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag,
+                            const std::vector<T>& weights, size_t num_freqs) {
     const size_t n = x_mag.size();
-    if (n == 0) return static_cast<T>(0);
+    if (n == 0 || num_freqs == 0) return static_cast<T>(0);
 
     constexpr T EPSILON = static_cast<T>(1e-8);
+    size_t num_frames = n / num_freqs;
 
     T mag_loss = 0;
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* x_ptr = &x_mag[frame * num_freqs];
+        const T* y_ptr = &y_mag[frame * num_freqs];
 #if defined(HAS_OPENMP)
 #pragma omp simd reduction(+ : mag_loss)
 #endif
-    for (size_t i = 0; i < n; ++i) {
-        T log_y = std::log(y_mag[i] + EPSILON);
-        T log_x = std::log(x_mag[i] + EPSILON);
-        mag_loss += std::abs(log_y - log_x);
+        for (size_t freq = 0; freq < num_freqs; ++freq) {
+            T log_y = std::log(y_ptr[freq] + EPSILON);
+            T log_x = std::log(x_ptr[freq] + EPSILON);
+            mag_loss += weights[freq] * std::abs(log_y - log_x);
+        }
     }
 
     return mag_loss / static_cast<T>(n);
@@ -548,7 +604,8 @@ inline std::vector<T> normalize_signal(const std::vector<T>& x) {
  */
 template <typename T>
 struct TargetFeaturesFast {
-    std::vector<std::vector<T>> stfts;  // [scale][frame * freq]
+    std::vector<std::vector<T>> stfts;    // [scale][frame * freq]
+    std::vector<std::vector<T>> weights;  // [scale][freq]
     std::vector<T> stft_means;
     std::vector<size_t> num_frames;
     std::vector<size_t> num_freqs;
@@ -570,13 +627,19 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     // Normalize target
     std::vector<T> tgt_norm = detail::normalize_signal(target);
 
-    // Compute STFT magnitudes for each scale
+    // Compute STFT magnitudes and perceptual weights for each scale
     for (size_t i = 0; i < fft_sizes.size(); ++i) {
         features.stfts.push_back(
             detail::stft_fast(tgt_norm, fft_sizes[i], hop_sizes[i], fft_sizes[i]));
         features.num_frames[i] =
             (target.size() >= fft_sizes[i]) ? (target.size() - fft_sizes[i]) / hop_sizes[i] + 1 : 0;
         features.num_freqs[i] = fft_sizes[i] / 2 + 1;
+
+        // Precompute perceptual weights for this FFT size
+        features.weights.push_back(detail::compute_frequency_weights(
+            features.num_freqs[i], fft_sizes[i],
+            static_cast<T>(adaptive_echo::constants::TRAINING_SAMPLE_RATE)));
+
         if (!features.stfts[i].empty()) {
             features.stft_means[i] = detail::vectorized_mean(features.stfts[i]);
         } else {
@@ -614,12 +677,14 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
 
         if (x_stft.size() != y_stft.size()) continue;
 
-        // Spectral convergence loss (70% weight)
-        T sc_loss =
-            detail::spectral_convergence_loss(x_stft, y_stft, target_features.stft_means[scale]);
+        // Spectral convergence loss (70% weight) with frequency weighting
+        T sc_loss = detail::spectral_convergence_loss(
+            x_stft, y_stft, target_features.stft_means[scale], target_features.weights[scale],
+            target_features.num_freqs[scale]);
 
-        // Log-magnitude loss (30% weight)
-        T mag_loss = detail::log_magnitude_loss(x_stft, y_stft);
+        // Log-magnitude loss (30% weight) with frequency weighting
+        T mag_loss = detail::log_magnitude_loss(x_stft, y_stft, target_features.weights[scale],
+                                                target_features.num_freqs[scale]);
 
         total_loss += static_cast<T>(0.7) * sc_loss + static_cast<T>(0.3) * mag_loss;
     }
