@@ -26,6 +26,8 @@
 
 #include "adaptive_echo/constants.hpp"
 
+#include <pocketfft_hdronly.h>
+
 // SIMD intrinsics support
 #if defined(__AVX2__)
 #include <immintrin.h>
@@ -51,37 +53,6 @@ namespace adaptive_echo {
 
 namespace detail {
 /**
- * Aligned allocator for SIMD-friendly memory.
- * Ensures 64-byte alignment for AVX-512 compatibility.
- */
-template <typename T>
-class AlignedAllocator {
-   public:
-    static constexpr size_t ALIGNMENT = 64;
-
-    static T* allocate(size_t n) {
-        void* ptr = nullptr;
-#if defined(_WIN32)
-        ptr = _aligned_malloc(n * sizeof(T), ALIGNMENT);
-        if (!ptr) throw std::bad_alloc();
-#else
-        if (posix_memalign(&ptr, ALIGNMENT, n * sizeof(T)) != 0) {
-            throw std::bad_alloc();
-        }
-#endif
-        return static_cast<T*>(ptr);
-    }
-
-    static void deallocate(T* ptr) {
-#if defined(_WIN32)
-        _aligned_free(ptr);
-#else
-        free(ptr);
-#endif
-    }
-};
-
-/**
  * Thread-local scratch buffer pool for STFT computation.
  * Prevents allocation overhead during parallel processing.
  */
@@ -104,133 +75,6 @@ class ScratchBufferPool {
    private:
     ScratchBufferPool() = default;
 };
-
-/**
- * Optimized FFT with precomputed twiddle factors and bit-reversal.
- * Thread-safe initialization using static local variables.
- */
-template <typename T>
-class FFTCache {
-   public:
-    static FFTCache& get(size_t n) {
-        // Pre-initialize common FFT sizes to avoid race conditions
-        static FFTCache cache_1024(1024);
-        static FFTCache cache_512(512);
-        static FFTCache cache_256(256);
-        static FFTCache cache_128(128);
-        static FFTCache cache_64(64);
-        static FFTCache cache_32(32);
-        static FFTCache cache_16(16);
-        static FFTCache cache_8(8);
-
-        switch (n) {
-            case 1024:
-                return cache_1024;
-            case 512:
-                return cache_512;
-            case 256:
-                return cache_256;
-            case 128:
-                return cache_128;
-            case 64:
-                return cache_64;
-            case 32:
-                return cache_32;
-            case 16:
-                return cache_16;
-            case 8:
-                return cache_8;
-            default: {
-                // Fallback for other sizes - use a map
-                static std::unordered_map<size_t, std::unique_ptr<FFTCache>> cache_map;
-                static std::mutex cache_mutex;
-
-                std::lock_guard<std::mutex> lock(cache_mutex);
-                auto it = cache_map.find(n);
-                if (it == cache_map.end()) {
-                    cache_map[n] = std::unique_ptr<FFTCache>(new FFTCache(n));
-                }
-                return *cache_map[n];
-            }
-        }
-    }
-
-    const std::vector<std::complex<T>>& get_twiddle() const { return twiddle_; }
-    const std::vector<size_t>& get_bitrev() const { return bitrev_; }
-    size_t get_n() const { return n_; }
-
-   private:
-    size_t n_;
-    std::vector<std::complex<T>> twiddle_;
-    std::vector<size_t> bitrev_;
-
-    explicit FFTCache(size_t n) : n_(n) {
-        // Calculate number of stages (log2(n))
-        size_t stages = 0;
-        size_t temp = n;
-        while (temp > 1) {
-            temp >>= 1;
-            stages++;
-        }
-
-        // Precompute twiddle factors: W_N^k = e^(-2πik/N)
-        twiddle_.resize(n / 2);
-        const T TWO_PI = static_cast<T>(2.0 * M_PI);
-        for (size_t i = 0; i < n / 2; ++i) {
-            T ang = -TWO_PI * static_cast<T>(i) / static_cast<T>(n);
-            twiddle_[i] = std::complex<T>(std::cos(ang), std::sin(ang));
-        }
-
-        // Precompute bit-reversal permutation
-        bitrev_.resize(n);
-        for (size_t i = 0; i < n; ++i) {
-            size_t j = 0;
-            for (size_t k = 0; k < stages; ++k) {
-                j = (j << 1) | ((i >> k) & 1);
-            }
-            bitrev_[i] = j;
-        }
-    }
-};
-
-/**
- * In-place iterative FFT with SIMD-friendly access patterns.
- */
-template <typename T>
-inline void fft_inplace(std::vector<std::complex<T>>& data) {
-    size_t n = data.size();
-    if (n <= 1) return;
-
-    auto& cache = FFTCache<T>::get(n);
-    const auto& bitrev = cache.get_bitrev();
-    const auto& twiddle = cache.get_twiddle();
-
-    // Bit-reverse permutation
-    for (size_t i = 0; i < n; ++i) {
-        size_t j = bitrev[i];
-        if (i < j) {
-            std::swap(data[i], data[j]);
-        }
-    }
-
-    // FFT stages - iterative approach for better cache locality
-    for (size_t stage = 1, step = 2; stage < n; stage <<= 1, step <<= 1) {
-        size_t twiddle_step = n / step;
-
-        for (size_t group = 0; group < n; group += step) {
-            for (size_t pair = 0; pair < stage; ++pair) {
-                size_t i = group + pair;
-                size_t j = i + stage;
-                size_t twidx = pair * twiddle_step;
-
-                const std::complex<T>& w = twiddle[twidx];
-                std::complex<T> temp = data[j] * w;
-                data[j] = data[i] - temp;
-                data[i] = data[i] + temp;
-            }
-        }
-    }
-}
 
 /**
  * Precomputed Hann window cache with aligned memory.
@@ -346,27 +190,35 @@ inline T vectorized_variance(const std::vector<T>& data, T mean) {
 }
 
 /**
- * Single STFT frame computation.
+ * Single STFT frame computation using pocketfft.
  * Thread-safe: each call allocates its own buffer to avoid thread conflicts.
  */
 template <typename T>
 inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& window, size_t frame,
                                size_t start, size_t win_length, size_t n_fft, size_t num_freqs,
                                T* result) {
+    using complex_t = std::complex<T>;
+    
     // Allocate buffer locally - OpenMP ensures each thread has its own
-    std::vector<std::complex<T>> frame_data(n_fft);
+    std::vector<complex_t> frame_data(n_fft);
+    std::vector<complex_t> fft_output(n_fft);
 
     // Window and zero-pad
     for (size_t i = 0; i < n_fft; ++i) {
         if (i < win_length && start + i < x.size()) {
-            frame_data[i] = std::complex<T>(x[start + i] * window[i]);
+            frame_data[i] = complex_t(x[start + i] * window[i], 0);
         } else {
-            frame_data[i] = std::complex<T>(0);
+            frame_data[i] = complex_t(0, 0);
         }
     }
 
-    // FFT
-    fft_inplace(frame_data);
+    // FFT using pocketfft
+    pocketfft::shape_t shape{n_fft};
+    pocketfft::stride_t stride_in{sizeof(complex_t)};
+    pocketfft::stride_t stride_out{sizeof(complex_t)};
+    pocketfft::shape_t axes{0};  // Transform along axis 0
+    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true,
+                      frame_data.data(), fft_output.data(), T(1));
 
     // Store magnitudes - match JAX scipy.signal.stft behavior exactly
     // JAX's FFT does NOT normalize by 1/N (standard FFT convention)
@@ -376,7 +228,7 @@ inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& wi
     T scale = static_cast<T>(1.0) / window_sum;
     size_t offset = frame * num_freqs;
     for (size_t freq = 0; freq < num_freqs; ++freq) {
-        result[offset + freq] = std::abs(frame_data[freq]) * scale;
+        result[offset + freq] = std::abs(fft_output[freq]) * scale;
     }
 }
 
