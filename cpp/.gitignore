@@ -82,3 +82,6 @@ vcpkg_installed/
 conanbuildinfo*
 conan.lock
 conanfile.pyc
+
+# cache
+.cache/

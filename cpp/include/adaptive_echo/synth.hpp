@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "adaptive_echo/constants.hpp"
 #include "adaptive_echo/envelope.hpp"
 #include "adaptive_echo/filter.hpp"
 #include "adaptive_echo/interpolation.hpp"
@@ -316,8 +317,8 @@ inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vect
     adaptive_echo::FilterParameters<T> filter_params =
         adaptive_echo::mapFilterParameters(settings, 46);
 
-    // Calculate sample rate from times
-    T sampleRate = (n > 1) ? static_cast<T>(1.0) / (times[1] - times[0]) : static_cast<T>(44100.0);
+    // Use constant sample rate
+    T sampleRate = static_cast<T>(constants::OUTPUT_SAMPLE_RATE);
 
     // Apply filters to the result
     adaptive_echo::applyFilters(filter_params, result, sampleRate);
