@@ -6,7 +6,7 @@
  *
  * Features:
  * - OpenMP parallelization across STFT frames
- * - Batch STFT processing (C++ equivalent of JAX vmap)
+ * - Batch STFT processing
  * - SIMD vectorization using compiler intrinsics
  * - Thread-safe loss computation for parallel DE evaluation
  * - Precomputed FFT twiddle factors and bit-reversal tables
@@ -220,10 +220,8 @@ inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& wi
     pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true,
                       frame_data.data(), fft_output.data(), T(1));
 
-    // Store magnitudes - match JAX scipy.signal.stft behavior exactly
-    // JAX's FFT does NOT normalize by 1/N (standard FFT convention)
-    // scipy.signal.stft applies window normalization: 1.0 / sum(window) for magnitude spectrum
-    // This matches the default 'spectrum' scaling mode
+    // Store magnitudes with window normalization
+    // FFT normalization: 1.0 / sum(window) for magnitude spectrum
     T window_sum = WindowCache<T>::get_sum(win_length);
     T scale = static_cast<T>(1.0) / window_sum;
     size_t offset = frame * num_freqs;
@@ -316,7 +314,7 @@ inline std::vector<T> compute_frequency_weights(size_t num_freqs, size_t n_fft, 
 }
 
 /**
- * Batch STFT computation - C++ equivalent of JAX vmap.
+ * Batch STFT computation.
  * Processes multiple audio signals in parallel.
  */
 template <typename T>
@@ -514,7 +512,7 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     // Normalize generated audio
     std::vector<T> gen_norm = detail::normalize_signal(generated);
 
-    // Use same FFT sizes as JAX project
+    // Use standard FFT sizes
     static const std::vector<size_t> fft_sizes = {1024, 512, 256};
     static const std::vector<size_t> hop_sizes = {512, 256, 128};
 
@@ -552,7 +550,6 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
 
 /**
  * Batch loss computation - process multiple generated signals in parallel.
- * C++ equivalent of JAX vmap over loss computation.
  */
 template <typename T>
 inline std::vector<T> compute_audio_loss_batch(const std::vector<std::vector<T>>& generated_batch,
