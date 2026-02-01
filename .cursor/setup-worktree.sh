@@ -1,7 +1,6 @@
 #!/bin/bash
 # Setup script for worktree environment
 # Sets up environment variables needed for building/running
-# Copies build caches from root worktree to speed up builds
 # Uses $ROOT_WORKTREE_PATH provided by Cursor
 
 set -e
@@ -44,36 +43,6 @@ if [ "${ROOT_WORKTREE}" != "${WORKTREE_ROOT}" ] && [ -d "${ROOT_WORKTREE}" ]; th
             echo "  Skipping C++ build cache (too large: ${BUILD_SIZE}MB)"
         fi
     fi
-    
-    # Copy Python virtual environment (if it exists)
-    ROOT_VENV="${ROOT_WORKTREE}/adaptive_echo_jax/.venv"
-    WORKTREE_VENV="${WORKTREE_ROOT}/adaptive_echo_jax/.venv"
-    if [ -d "${ROOT_VENV}" ]; then
-        VENV_SIZE=$(du -sm "${ROOT_VENV}" 2>/dev/null | cut -f1 || echo "0")
-        if [ "${VENV_SIZE}" -lt 1000 ]; then
-            echo "  Copying Python virtual environment (${VENV_SIZE}MB)..."
-            mkdir -p "${WORKTREE_ROOT}/adaptive_echo_jax"
-            if command -v rsync >/dev/null 2>&1; then
-                rsync -a --delete "${ROOT_VENV}/" "${WORKTREE_VENV}/" 2>/dev/null || true
-            else
-                cp -r "${ROOT_VENV}" "${WORKTREE_VENV}" 2>/dev/null || true
-            fi
-        else
-            echo "  Skipping Python venv (too large: ${VENV_SIZE}MB)"
-        fi
-    fi
-fi
-
-# Set up Python dependencies with uv if .venv doesn't exist
-if [ ! -d "${WORKTREE_ROOT}/adaptive_echo_jax/.venv" ]; then
-    echo "Setting up Python dependencies..."
-    cd "${WORKTREE_ROOT}/adaptive_echo_jax"
-    if command -v uv >/dev/null 2>&1; then
-        uv sync --no-dev || uv pip install -e . || echo "Warning: Failed to install Python dependencies"
-    else
-        echo "Warning: uv not found, skipping Python dependency installation"
-    fi
-    cd "${WORKTREE_ROOT}"
 fi
 
 # VST3_SDK path - only set if not already set and if it exists in a relative location

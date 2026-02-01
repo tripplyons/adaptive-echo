@@ -14,7 +14,7 @@
 namespace adaptive_echo {
 
 namespace detail {
-// Simple random number generator (similar to JAX's PRNGKey(42))
+// Simple random number generator with fixed seed
 inline std::mt19937& get_rng() {
     static std::mt19937 rng(42);
     return rng;

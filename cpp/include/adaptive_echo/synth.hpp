@@ -88,7 +88,6 @@ inline float fast_pow(float base, float exp) {
 }
 
 // Deterministic normal noise generator - produces the same noise for a given index
-// This matches JAX behavior where noise is generated from a fixed key (normal with std 0.5)
 inline float deterministic_noise(size_t index) {
     // Simple hash function to generate two uniform values from index
     auto hash = [](uint32_t x) {
@@ -109,7 +108,7 @@ inline float deterministic_noise(size_t index) {
     float mag = std::sqrt(-2.0f * std::log(u1));
     float z0 = mag * std::cos(6.28318530718f * u2);
 
-    return z0 * 0.5f;  // Match JAX's normal noise with std 0.5
+    return z0 * 0.5f;
 }
 }  // namespace detail
 
@@ -158,7 +157,7 @@ inline void osc_uniform_optimized(const std::vector<T>& time, const std::vector<
         T amplitude = min_amplitude + (max_amplitude - min_amplitude) * amplitude_uniform[i];
         T noise_level = noise_level_uniform[i];
 
-        // Deterministic noise based on sample index (matches JAX fixed-key behavior)
+        // Deterministic noise based on sample index
         T noise = static_cast<T>(detail::deterministic_noise(i));
 
         // Calculate phase with optional FM
@@ -254,7 +253,7 @@ inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vect
     T osc_b_high[6] = {settings[28], settings[30], settings[32],
                        settings[34], settings[36], settings[38]};
 
-    // Match JAX behavior: env_mod is sampled once (first element) to set osc params
+    // env_mod is sampled once (first element) to set osc params
     T env_mod_scalar = (n > 0) ? env_mod[0] : static_cast<T>(0);
     T osc_b_freq_scalar = linear_interp(osc_b_low[0], osc_b_high[0], env_mod_scalar);
     T osc_b_phase_scalar = linear_interp(osc_b_low[1], osc_b_high[1], env_mod_scalar);
