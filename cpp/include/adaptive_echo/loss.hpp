@@ -12,6 +12,8 @@
  * - Precomputed FFT twiddle factors and bit-reversal tables
  */
 
+#include <pocketfft_hdronly.h>
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -25,8 +27,6 @@
 #include <vector>
 
 #include "adaptive_echo/constants.hpp"
-
-#include <pocketfft_hdronly.h>
 
 // SIMD intrinsics support
 #if defined(__AVX2__)
@@ -198,7 +198,7 @@ inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& wi
                                size_t start, size_t win_length, size_t n_fft, size_t num_freqs,
                                T* result) {
     using complex_t = std::complex<T>;
-    
+
     // Allocate buffer locally - OpenMP ensures each thread has its own
     std::vector<complex_t> frame_data(n_fft);
     std::vector<complex_t> fft_output(n_fft);
@@ -217,8 +217,8 @@ inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& wi
     pocketfft::stride_t stride_in{sizeof(complex_t)};
     pocketfft::stride_t stride_out{sizeof(complex_t)};
     pocketfft::shape_t axes{0};  // Transform along axis 0
-    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true,
-                      frame_data.data(), fft_output.data(), T(1));
+    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true, frame_data.data(),
+                      fft_output.data(), T(1));
 
     // Store magnitudes with window normalization
     // FFT normalization: 1.0 / sum(window) for magnitude spectrum

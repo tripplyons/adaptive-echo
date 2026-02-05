@@ -4,14 +4,9 @@ project(adaptive_echo VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Fetch pocketfft for FFT-based resampling (scipy.signal.resample parity)
-include(FetchContent)
-FetchContent_Declare(
-    pocketfft
-    GIT_REPOSITORY https://github.com/mreineck/pocketfft.git
-    GIT_TAG cpp
-)
-FetchContent_MakeAvailable(pocketfft)
+# Use bundled pocketfft header-only library
+# Located in third_party/pocketfft/
+set(POCKETFFT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft")
 
 # Find OpenMP
 # On macOS with Apple Clang, we need to help CMake find libomp
@@ -72,7 +67,7 @@ add_library(adaptive_echo INTERFACE)
 target_include_directories(adaptive_echo INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-    $<BUILD_INTERFACE:${pocketfft_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${POCKETFFT_ROOT}>
 )
 
 # Main executable
