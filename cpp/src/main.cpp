@@ -175,8 +175,8 @@ int main(int argc, char* argv[]) {
     using namespace adaptive_echo::constants;
 
     std::string target_path;
-    int population_size = 200;
-    int num_iterations = 50;
+    int population_size = 128;
+    int num_iterations = 128;
     float stft_weight = 1.0f;
 
     for (int i = 1; i < argc; ++i) {
@@ -203,6 +203,14 @@ int main(int argc, char* argv[]) {
     if (!target_path.empty()) {
         std::cout << "Loading target: " << target_path << std::endl;
         target_audio = load_target_audio(target_path, NUM_SAMPLES);
+
+        // Normalize input to 0.5 max amplitude
+        float target_max = 0;
+        for (float s : target_audio) target_max = std::max(target_max, std::abs(s));
+        if (target_max > 0) {
+            float input_scale = 0.5f / target_max;
+            for (float& s : target_audio) s *= input_scale;
+        }
     } else {
         std::cout << "No target, using 440Hz sine." << std::endl;
         target_audio.resize(NUM_SAMPLES);
@@ -232,8 +240,9 @@ int main(int argc, char* argv[]) {
 
     float max_val = 0;
     for (float s : eval_audio) max_val = std::max(max_val, std::abs(s));
-    if (max_val > 1.0f) {
-        for (float& s : eval_audio) s /= max_val;
+    if (max_val > 0) {
+        float scale = 0.95f / max_val;
+        for (float& s : eval_audio) s *= scale;
     }
 
     if (WavWriter::write("output.wav", eval_audio, OUTPUT_SAMPLE_RATE)) {

@@ -14,16 +14,9 @@
 
 #include <pocketfft_hdronly.h>
 
-#include <algorithm>
 #include <cmath>
 #include <complex>
-#include <cstdint>
 #include <cstring>
-#include <memory>
-#include <mutex>
-#include <numeric>
-#include <thread>
-#include <unordered_map>
 #include <vector>
 
 #include "adaptive_echo/constants.hpp"
@@ -236,7 +229,7 @@ inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& wi
  */
 template <typename T>
 inline std::vector<T> stft_fast(const std::vector<T>& x, size_t win_length, size_t hop_length,
-                                size_t n_fft, bool parallel = true) {
+                                size_t n_fft) {
     const auto& window = WindowCache<T>::get(win_length);
     size_t num_frames = (x.size() >= win_length) ? (x.size() - win_length) / hop_length + 1 : 0;
     size_t num_freqs = n_fft / 2 + 1;
@@ -248,23 +241,11 @@ inline std::vector<T> stft_fast(const std::vector<T>& x, size_t win_length, size
     std::vector<T> result(num_frames * num_freqs);
 
 #if defined(HAS_OPENMP)
-    if (parallel && num_frames > 16) {
-// Parallel processing for many frames
 #pragma omp parallel for schedule(dynamic, 4)
-        for (size_t frame = 0; frame < num_frames; ++frame) {
-            size_t start = frame * hop_length;
-            compute_stft_frame(x, window, frame, start, win_length, n_fft, num_freqs,
-                               result.data());
-        }
-    } else
 #endif
-    {
-        // Sequential processing for small inputs
-        for (size_t frame = 0; frame < num_frames; ++frame) {
-            size_t start = frame * hop_length;
-            compute_stft_frame(x, window, frame, start, win_length, n_fft, num_freqs,
-                               result.data());
-        }
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        size_t start = frame * hop_length;
+        compute_stft_frame(x, window, frame, start, win_length, n_fft, num_freqs, result.data());
     }
 
     return result;
@@ -311,30 +292,6 @@ inline std::vector<T> compute_frequency_weights(size_t num_freqs, size_t n_fft, 
     }
 
     return weights;
-}
-
-/**
- * Batch STFT computation.
- * Processes multiple audio signals in parallel.
- */
-template <typename T>
-inline std::vector<std::vector<T>> stft_batch(const std::vector<std::vector<T>>& batch,
-                                              size_t win_length, size_t hop_length, size_t n_fft) {
-    size_t batch_size = batch.size();
-    std::vector<std::vector<T>> results(batch_size);
-
-#if defined(HAS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < batch_size; ++i) {
-        results[i] = stft_fast(batch[i], win_length, hop_length, n_fft, false);
-    }
-#else
-    for (size_t i = 0; i < batch_size; ++i) {
-        results[i] = stft_fast(batch[i], win_length, hop_length, n_fft, false);
-    }
-#endif
-
-    return results;
 }
 
 /**
@@ -446,6 +403,80 @@ inline std::vector<T> normalize_signal(const std::vector<T>& x) {
 
     return result;
 }
+
+/**
+ * Downscale spectrogram by averaging frequency bins.
+ * 4x downscale: average every 4 bins into 1 bin.
+ * 16x downscale: average every 16 bins into 1 bin.
+ */
+template <typename T>
+inline std::vector<T> downscale_spectrogram(const std::vector<T>& spec, size_t num_freqs,
+                                            size_t downscale_factor) {
+    if (spec.empty() || num_freqs == 0 || downscale_factor <= 1) return spec;
+
+    size_t num_frames = spec.size() / num_freqs;
+    size_t new_num_freqs = num_freqs / downscale_factor;
+    std::vector<T> downscaled(num_frames * new_num_freqs);
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* frame_data = &spec[frame * num_freqs];
+        T* dest = &downscaled[frame * new_num_freqs];
+
+        for (size_t new_f = 0; new_f < new_num_freqs; ++new_f) {
+            size_t start_f = new_f * downscale_factor;
+            T sum = 0;
+            for (size_t i = 0; i < downscale_factor; ++i) {
+                sum += frame_data[start_f + i];
+            }
+            dest[new_f] = sum / static_cast<T>(downscale_factor);
+        }
+    }
+
+    return downscaled;
+}
+
+/**
+ * Helper to aggregate weights for downscaled spectrograms.
+ * Sums original weights into downscaled bins.
+ */
+template <typename T>
+inline std::vector<T> aggregate_weights(const std::vector<T>& original_weights, size_t factor,
+                                        size_t new_num_freqs) {
+    std::vector<T> aggregated(new_num_freqs);
+    for (size_t f = 0; f < new_num_freqs; ++f) {
+        T sum = 0;
+        for (size_t j = 0; j < factor; ++j) {
+            sum += original_weights[f * factor + j];
+        }
+        aggregated[f] = sum;
+    }
+    return aggregated;
+}
+
+/**
+ * Compute downscaled loss for a given factor (4x or 16x).
+ * Returns the combined spectral convergence + log-magnitude loss.
+ */
+template <typename T>
+inline T compute_downscale_loss(const std::vector<T>& x_stft, const std::vector<T>& y_stft,
+                                const std::vector<T>& original_weights, size_t num_freqs,
+                                size_t factor, T y_stft_mean) {
+    size_t new_num_freqs = num_freqs / factor;
+    auto x_stft_down = detail::downscale_spectrogram(x_stft, num_freqs, factor);
+
+    if (x_stft_down.size() != y_stft.size()) {
+        return static_cast<T>(0);
+    }
+
+    auto weights_down = aggregate_weights(original_weights, factor, new_num_freqs);
+
+    T sc_loss = detail::spectral_convergence_loss(x_stft_down, y_stft, y_stft_mean, weights_down,
+                                                  new_num_freqs);
+    T mag_loss = detail::log_magnitude_loss(x_stft_down, y_stft, weights_down, new_num_freqs);
+
+    return static_cast<T>(0.9) * sc_loss + static_cast<T>(0.1) * mag_loss;
+}
+
 }  // namespace detail
 
 /**
@@ -459,6 +490,19 @@ struct TargetFeaturesFast {
     std::vector<size_t> num_frames;
     std::vector<size_t> num_freqs;
     T zcr;
+
+    // Downscaled spectrograms (4x and 16x)
+    std::vector<std::vector<T>> stfts_4x;   // [scale][frame * freq/4]
+    std::vector<std::vector<T>> stfts_16x;  // [scale][frame * freq/16]
+    std::vector<T> stft_means_4x;
+    std::vector<T> stft_means_16x;
+
+    // Store FFT parameters used for precomputation
+    std::vector<size_t> fft_sizes;
+    std::vector<size_t> hop_sizes;
+
+    // Store target energy/RMS for amplitude matching
+    T target_rms;
 };
 
 /**
@@ -466,15 +510,20 @@ struct TargetFeaturesFast {
  */
 template <typename T>
 inline TargetFeaturesFast<T> precompute_target_features_fast(
-    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {1024, 512, 256},
-    const std::vector<size_t>& hop_sizes = {512, 256, 128}) {
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {1024, 512},
+    const std::vector<size_t>& hop_sizes = {512, 256}) {
     TargetFeaturesFast<T> features;
     features.num_frames.resize(fft_sizes.size());
     features.num_freqs.resize(fft_sizes.size());
     features.stft_means.resize(fft_sizes.size());
 
-    // Normalize target
-    std::vector<T> tgt_norm = detail::normalize_signal(target);
+    // Compute target RMS from original signal
+    T target_mean = detail::vectorized_mean(target);
+    T target_var = detail::vectorized_variance(target, target_mean);
+    features.target_rms = std::sqrt(target_var);
+
+    // Use original signal (no normalization)
+    const std::vector<T>& tgt_norm = target;
 
     // Compute STFT magnitudes and perceptual weights for each scale
     for (size_t i = 0; i < fft_sizes.size(); ++i) {
@@ -499,6 +548,33 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     // Compute zero-crossing rate
     features.zcr = detail::zero_crossing_rate_fast(tgt_norm);
 
+    // Store FFT parameters for use during loss computation
+    features.fft_sizes = fft_sizes;
+    features.hop_sizes = hop_sizes;
+
+    // Precompute 4x and 16x downscaled spectrograms
+    features.stfts_4x.resize(fft_sizes.size());
+    features.stfts_16x.resize(fft_sizes.size());
+    features.stft_means_4x.resize(fft_sizes.size());
+    features.stft_means_16x.resize(fft_sizes.size());
+
+    for (size_t i = 0; i < fft_sizes.size(); ++i) {
+        size_t num_freqs = features.num_freqs[i];
+
+        // Only downscale if we have enough frequency bins
+        if (num_freqs >= 16) {
+            features.stfts_4x[i] = detail::downscale_spectrogram(features.stfts[i], num_freqs, 4);
+            if (!features.stfts_4x[i].empty()) {
+                features.stft_means_4x[i] = detail::vectorized_mean(features.stfts_4x[i]);
+            }
+
+            features.stfts_16x[i] = detail::downscale_spectrogram(features.stfts[i], num_freqs, 16);
+            if (!features.stfts_16x[i].empty()) {
+                features.stft_means_16x[i] = detail::vectorized_mean(features.stfts_16x[i]);
+            }
+        }
+    }
+
     return features;
 }
 
@@ -509,12 +585,12 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
 template <typename T>
 inline T compute_audio_loss_fast(const std::vector<T>& generated,
                                  const TargetFeaturesFast<T>& target_features) {
-    // Normalize generated audio
-    std::vector<T> gen_norm = detail::normalize_signal(generated);
+    // Use original generated signal (no normalization)
+    const std::vector<T>& gen_norm = generated;
 
-    // Use standard FFT sizes
-    static const std::vector<size_t> fft_sizes = {1024, 512, 256};
-    static const std::vector<size_t> hop_sizes = {512, 256, 128};
+    // Use FFT sizes from target_features (must match what was used during precomputation)
+    const auto& fft_sizes = target_features.fft_sizes;
+    const auto& hop_sizes = target_features.hop_sizes;
 
     T total_loss = 0;
 
@@ -535,7 +611,20 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
         T mag_loss = detail::log_magnitude_loss(x_stft, y_stft, target_features.weights[scale],
                                                 target_features.num_freqs[scale]);
 
-        total_loss += static_cast<T>(0.7) * sc_loss + static_cast<T>(0.3) * mag_loss;
+        T base_loss = static_cast<T>(0.9) * sc_loss + static_cast<T>(0.1) * mag_loss;
+
+        // Compute 4x downscale loss (1/3 weight)
+        T down4x_loss = detail::compute_downscale_loss(
+            x_stft, target_features.stfts_4x[scale], target_features.weights[scale],
+            target_features.num_freqs[scale], 4, target_features.stft_means_4x[scale]);
+
+        // Compute 16x downscale loss (1/3 weight)
+        T down16x_loss = detail::compute_downscale_loss(
+            x_stft, target_features.stfts_16x[scale], target_features.weights[scale],
+            target_features.num_freqs[scale], 16, target_features.stft_means_16x[scale]);
+
+        // Average the three resolutions for weighted impact
+        total_loss += 0.7 * base_loss + 0.2 * down4x_loss + 0.1 * down16x_loss;
     }
 
     // Average over scales
@@ -545,7 +634,22 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     T gen_zcr = detail::zero_crossing_rate_fast(gen_norm);
     T zcr_loss = std::abs(gen_zcr - target_features.zcr);
 
-    return static_cast<T>(0.95) * total_loss + static_cast<T>(0.05) * zcr_loss;
+    // Add energy/RMS matching term (25% weight) to prevent quiet solutions
+    T gen_mean = detail::vectorized_mean(generated);
+    T gen_var = detail::vectorized_variance(generated, gen_mean);
+    T gen_rms = std::sqrt(gen_var);
+    T energy_loss = static_cast<T>(0);
+    if (target_features.target_rms > static_cast<T>(1e-8)) {
+        T rms_ratio = gen_rms / target_features.target_rms;
+        // Penalize both too quiet and too loud
+        energy_loss = std::abs(static_cast<T>(1.0) - rms_ratio);
+    } else {
+        // If target is silent, penalize any non-zero generated signal
+        energy_loss = gen_rms;
+    }
+
+    return static_cast<T>(0.6) * total_loss + static_cast<T>(0.2) * zcr_loss +
+           static_cast<T>(0.2) * energy_loss;
 }
 
 /**
