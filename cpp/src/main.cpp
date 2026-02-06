@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -8,7 +10,7 @@
 
 #include "adaptive_echo/constants.hpp"
 #include "adaptive_echo/filter.hpp"
-#include "adaptive_echo/hybrid_evolution.hpp"
+#include "adaptive_echo/greedy_optimizer.hpp"
 #include "adaptive_echo/loss.hpp"
 #include "adaptive_echo/resample.hpp"
 #include "adaptive_echo/synth.hpp"
@@ -162,10 +164,17 @@ std::vector<float> load_target_audio(const std::string& audio_path, int target_l
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [target_audio.wav] [options]\n\n"
               << "Options:\n"
-              << "  --population <n>     Population size (default: 64)\n"
-              << "  --iterations <n>     Number of iterations (default: 100)\n"
-              << "  --trials <n>         Trials per parent (default: 64)\n"
-              << "  --stft-weight <f>    Weight for STFT loss (default: 1.0)\n";
+              << "  -p, --population <n>       Population size (default: 64)\n"
+              << "  -s, --sigma <f>            Initial sigma for restarts (default: 2.0)\n"
+              << "  -t, --time-limit <f>       Time limit in seconds (default: 30.0)\n"
+              << "  -m, --shade-memory <n>     SHADE memory size (default: 4)\n"
+              << "  -a, --archive-multiplier <n>  Archive size multiplier (default: 2)\n"
+              << "      --stagnation <n>       Stagnation threshold (default: 30)\n"
+              << "      --cr-std <f>           Cr standard deviation (default: 0.1)\n"
+              << "      --f-scale <f>          F scale parameter (default: 0.1)\n"
+              << "  -o, --output <path>        Output WAV file path (default: output.wav)\n"
+              << "      --json                 Output results as JSON to stdout\n"
+              << "  -h, --help                 Show this help message\n";
 }
 
 }  // namespace adaptive_echo
@@ -175,21 +184,42 @@ int main(int argc, char* argv[]) {
     using namespace adaptive_echo::constants;
 
     std::string target_path;
-    int population_size = 128;
-    int num_iterations = 128;
-    float stft_weight = 1.0f;
+    std::string output_path = "output.wav";
+    int population_size = 32;
+    float initial_sigma = 3.0f;
+    float time_limit = 60.0f;
+    int shade_memory_size = 8;
+    int archive_multiplier = 3;
+    int stagnation_threshold = 10;
+    float cr_std = 0.05f;
+    float f_scale = 0.05f;
+    bool output_json = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
-        } else if (arg == "--population" && i + 1 < argc) {
+        } else if ((arg == "--population" || arg == "-p") && i + 1 < argc) {
             population_size = std::atoi(argv[++i]);
-        } else if (arg == "--iterations" && i + 1 < argc) {
-            num_iterations = std::atoi(argv[++i]);
-        } else if (arg == "--stft-weight" && i + 1 < argc) {
-            stft_weight = std::atof(argv[++i]);
+        } else if ((arg == "--sigma" || arg == "-s") && i + 1 < argc) {
+            initial_sigma = std::atof(argv[++i]);
+        } else if ((arg == "--time-limit" || arg == "-t") && i + 1 < argc) {
+            time_limit = std::atof(argv[++i]);
+        } else if ((arg == "--shade-memory" || arg == "-m") && i + 1 < argc) {
+            shade_memory_size = std::atoi(argv[++i]);
+        } else if ((arg == "--archive-multiplier" || arg == "-a") && i + 1 < argc) {
+            archive_multiplier = std::atoi(argv[++i]);
+        } else if (arg == "--stagnation" && i + 1 < argc) {
+            stagnation_threshold = std::atoi(argv[++i]);
+        } else if (arg == "--cr-std" && i + 1 < argc) {
+            cr_std = std::atof(argv[++i]);
+        } else if (arg == "--f-scale" && i + 1 < argc) {
+            f_scale = std::atof(argv[++i]);
+        } else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
+            output_path = argv[++i];
+        } else if (arg == "--json") {
+            output_json = true;
         } else if (arg[0] != '-') {
             target_path = arg;
         }
@@ -201,7 +231,9 @@ int main(int argc, char* argv[]) {
 
     std::vector<float> target_audio;
     if (!target_path.empty()) {
-        std::cout << "Loading target: " << target_path << std::endl;
+        if (!output_json) {
+            std::cout << "Loading target: " << target_path << std::endl;
+        }
         target_audio = load_target_audio(target_path, NUM_SAMPLES);
 
         // Normalize input to 0.5 max amplitude
@@ -212,24 +244,35 @@ int main(int argc, char* argv[]) {
             for (float& s : target_audio) s *= input_scale;
         }
     } else {
-        std::cout << "No target, using 440Hz sine." << std::endl;
+        if (!output_json) {
+            std::cout << "No target, using 440Hz sine." << std::endl;
+        }
         target_audio.resize(NUM_SAMPLES);
         for (int i = 0; i < NUM_SAMPLES; ++i) {
             target_audio[i] = std::sin(2.0f * M_PI * 440.0f * time_train[i]);
         }
     }
 
-    LossFunction<float> loss_fn(target_audio, stft_weight);
+    LossFunction<float> loss_fn(target_audio);
     auto synth_fn = [](const std::vector<float>& settings, const std::vector<float>& time) {
         return synth(settings, time);
     };
 
-    std::cout << "Optimizing..." << std::endl;
-    auto result =
-        run_hybrid_evolution(loss_fn, time_train, synth_fn, population_size, num_iterations, 0.7f,
-                             0.05f, 2.0f, 0.8f, 0.2f, 0.8f, 0.4f, 0.1f, 0.25f, 0.1f, -1.0f);
+    if (!output_json) {
+        std::cout << "Optimizing (greedy)..." << std::endl;
+    }
 
-    std::cout << "Best loss: " << result.best_loss << std::endl;
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto result = run_greedy_optimization(
+        loss_fn, time_train, synth_fn, population_size, initial_sigma, time_limit,
+        shade_memory_size, archive_multiplier, stagnation_threshold, cr_std, f_scale, !output_json);
+    auto end_time = std::chrono::high_resolution_clock::now();
+
+    float time_elapsed = std::chrono::duration<float>(end_time - start_time).count();
+
+    if (!output_json) {
+        std::cout << "Best loss: " << result.best_loss << std::endl;
+    }
 
     int eval_samples = NUM_SECONDS * OUTPUT_SAMPLE_RATE;
     std::vector<float> eval_time(eval_samples);
@@ -245,8 +288,34 @@ int main(int argc, char* argv[]) {
         for (float& s : eval_audio) s *= scale;
     }
 
-    if (WavWriter::write("output.wav", eval_audio, OUTPUT_SAMPLE_RATE)) {
-        std::cout << "Saved: output.wav" << std::endl;
+    if (WavWriter::write(output_path, eval_audio, OUTPUT_SAMPLE_RATE)) {
+        if (!output_json) {
+            std::cout << "Saved: " << output_path << std::endl;
+        }
+    }
+
+    if (output_json) {
+        std::cout << std::fixed << std::setprecision(6);
+        std::cout << "{\n";
+        std::cout << "  \"best_loss\": " << result.best_loss << ",\n";
+        std::cout << "  \"best_settings\": [";
+        for (size_t i = 0; i < result.best_settings.size(); ++i) {
+            if (i > 0) std::cout << ", ";
+            std::cout << result.best_settings[i];
+        }
+        std::cout << "],\n";
+        std::cout << "  \"iterations_completed\": " << result.iterations_completed << ",\n";
+        std::cout << "  \"time_elapsed\": " << time_elapsed << ",\n";
+        std::cout << "  \"population_size\": " << population_size << ",\n";
+        std::cout << "  \"initial_sigma\": " << initial_sigma << ",\n";
+        std::cout << "  \"time_limit\": " << time_limit << ",\n";
+        std::cout << "  \"shade_memory_size\": " << shade_memory_size << ",\n";
+        std::cout << "  \"archive_multiplier\": " << archive_multiplier << ",\n";
+        std::cout << "  \"stagnation_threshold\": " << stagnation_threshold << ",\n";
+        std::cout << "  \"cr_std\": " << cr_std << ",\n";
+        std::cout << "  \"f_scale\": " << f_scale << "\n";
+        std::cout << "}" << std::endl;
+        std::cout.flush();
     }
 
     return 0;
