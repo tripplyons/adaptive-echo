@@ -11,7 +11,6 @@
 #include "adaptive_echo/cmaes_optimizer.hpp"
 #include "adaptive_echo/constants.hpp"
 #include "adaptive_echo/filter.hpp"
-#include "adaptive_echo/greedy_optimizer.hpp"
 #include "adaptive_echo/loss.hpp"
 #include "adaptive_echo/resample.hpp"
 #include "adaptive_echo/synth.hpp"
@@ -165,15 +164,9 @@ std::vector<float> load_target_audio(const std::string& audio_path, int target_l
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [target_audio.wav] [options]\n\n"
               << "Options:\n"
-              << "  --optimizer <type>         Optimizer: greedy (default) or cmaes\n"
-              << "  -p, --population <n>       Population size (greedy) or lambda (cmaes)\n"
+              << "  -p, --population <n>       Population size (lambda)\n"
               << "  -s, --sigma <f>            Initial sigma for restarts\n"
               << "  -t, --time-limit <f>       Time limit in seconds\n"
-              << "  -m, --shade-memory <n>     SHADE memory size (greedy only)\n"
-              << "  -a, --archive-multiplier <n>  Archive size multiplier (greedy)\n"
-              << "      --stagnation <n>       Stagnation threshold (greedy)\n"
-              << "      --cr-std <f>           Cr standard deviation (greedy)\n"
-              << "      --f-scale <f>          F scale parameter (greedy)\n"
               << "  -o, --output <path>        Output WAV file path\n"
               << "      --json                 Output results as JSON to stdout\n"
               << "  -h, --help                 Show this help message\n";
@@ -187,15 +180,9 @@ int main(int argc, char* argv[]) {
 
     std::string target_path;
     std::string output_path = "output.wav";
-    std::string optimizer = "greedy";
     int population_size = 32;
     float initial_sigma = 3.0f;
     float time_limit = 60.0f;
-    int shade_memory_size = 8;
-    int archive_multiplier = 3;
-    int stagnation_threshold = 10;
-    float cr_std = 0.05f;
-    float f_scale = 0.05f;
     bool output_json = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -203,24 +190,12 @@ int main(int argc, char* argv[]) {
         if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
-        } else if (arg == "--optimizer" && i + 1 < argc) {
-            optimizer = argv[++i];
         } else if ((arg == "--population" || arg == "-p") && i + 1 < argc) {
             population_size = std::atoi(argv[++i]);
         } else if ((arg == "--sigma" || arg == "-s") && i + 1 < argc) {
             initial_sigma = std::atof(argv[++i]);
         } else if ((arg == "--time-limit" || arg == "-t") && i + 1 < argc) {
             time_limit = std::atof(argv[++i]);
-        } else if ((arg == "--shade-memory" || arg == "-m") && i + 1 < argc) {
-            shade_memory_size = std::atoi(argv[++i]);
-        } else if ((arg == "--archive-multiplier" || arg == "-a") && i + 1 < argc) {
-            archive_multiplier = std::atoi(argv[++i]);
-        } else if (arg == "--stagnation" && i + 1 < argc) {
-            stagnation_threshold = std::atoi(argv[++i]);
-        } else if (arg == "--cr-std" && i + 1 < argc) {
-            cr_std = std::atof(argv[++i]);
-        } else if (arg == "--f-scale" && i + 1 < argc) {
-            f_scale = std::atof(argv[++i]);
         } else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
             output_path = argv[++i];
         } else if (arg == "--json") {
@@ -264,32 +239,16 @@ int main(int argc, char* argv[]) {
     };
 
     if (!output_json) {
-        std::cout << "Optimizing (" << optimizer << ")..." << std::endl;
+        std::cout << "Optimizing..." << std::endl;
     }
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    float best_loss;
-    std::vector<float> best_settings;
-    int iterations_completed;
-
-    if (optimizer == "cmaes") {
-        auto result = run_cmaes_optimization<float>(
-            loss_fn, time_train, synth_fn, population_size, initial_sigma,
-            time_limit, 10000, !output_json);
-        best_loss = result.best_loss;
-        best_settings = result.best_settings;
-        iterations_completed = result.iterations_completed;
-    } else {
-        // Default to greedy optimizer
-        auto result = run_greedy_optimization(
-            loss_fn, time_train, synth_fn, population_size, initial_sigma, time_limit,
-            shade_memory_size, archive_multiplier, stagnation_threshold, cr_std, f_scale,
-            !output_json);
-        best_loss = result.best_loss;
-        best_settings = result.best_settings;
-        iterations_completed = result.iterations_completed;
-    }
+    auto result = run_cmaes_optimization<float>(loss_fn, time_train, synth_fn, population_size,
+                                                initial_sigma, time_limit, 10000, !output_json);
+    float best_loss = result.best_loss;
+    std::vector<float> best_settings = result.best_settings;
+    int iterations_completed = result.iterations_completed;
 
     auto end_time = std::chrono::high_resolution_clock::now();
 
@@ -322,7 +281,6 @@ int main(int argc, char* argv[]) {
     if (output_json) {
         std::cout << std::fixed << std::setprecision(6);
         std::cout << "{\n";
-        std::cout << "  \"optimizer\": \"" << optimizer << "\",\n";
         std::cout << "  \"best_loss\": " << best_loss << ",\n";
         std::cout << "  \"best_settings\": [";
         for (size_t i = 0; i < best_settings.size(); ++i) {
@@ -334,12 +292,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  \"time_elapsed\": " << time_elapsed << ",\n";
         std::cout << "  \"population_size\": " << population_size << ",\n";
         std::cout << "  \"initial_sigma\": " << initial_sigma << ",\n";
-        std::cout << "  \"time_limit\": " << time_limit << ",\n";
-        std::cout << "  \"shade_memory_size\": " << shade_memory_size << ",\n";
-        std::cout << "  \"archive_multiplier\": " << archive_multiplier << ",\n";
-        std::cout << "  \"stagnation_threshold\": " << stagnation_threshold << ",\n";
-        std::cout << "  \"cr_std\": " << cr_std << ",\n";
-        std::cout << "  \"f_scale\": " << f_scale << "\n";
+        std::cout << "  \"time_limit\": " << time_limit << "\n";
         std::cout << "}" << std::endl;
         std::cout.flush();
     }

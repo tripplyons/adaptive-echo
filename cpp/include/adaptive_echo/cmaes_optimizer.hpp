@@ -58,7 +58,7 @@ struct CMAESResult {
  */
 template <typename T>
 class CovarianceMatrix {
-public:
+   public:
     explicit CovarianceMatrix(int n) : dim_(n), data_(n * n, static_cast<T>(0)) {
         // Initialize as identity matrix
         for (int i = 0; i < n; ++i) {
@@ -155,7 +155,7 @@ public:
         }
     }
 
-private:
+   private:
     int dim_;
     std::vector<T> data_;
 };
@@ -171,14 +171,11 @@ private:
  * @tparam SynthFn Synthesis function type (callable with settings and time)
  */
 template <typename T, typename LossFn, typename SynthFn>
-inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
-                                           const std::vector<T>& time,
-                                           SynthFn synth_fn,
-                                           int lambda = -1,
-                                           T initial_sigma = static_cast<T>(1.0),
-                                           T time_limit = static_cast<T>(30.0),
-                                           int max_iterations = 10000,
-                                           bool verbose = true) {
+inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn, const std::vector<T>& time,
+                                             SynthFn synth_fn, int lambda = -1,
+                                             T initial_sigma = static_cast<T>(1.0),
+                                             T time_limit = static_cast<T>(30.0),
+                                             int max_iterations = 10000, bool verbose = true) {
     const int num_settings = adaptive_echo::constants::NUM_SETTINGS;
     auto t_start = std::chrono::steady_clock::now();
     auto& rng = detail::get_cmaes_rng();
@@ -213,19 +210,23 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
     T mu_eff = static_cast<T>(1.0) / weights_squared_sum;
 
     // Strategy parameters
-    T cc = static_cast<T>(4.0) / (static_cast<T>(num_settings) + static_cast<T>(4.0));  // Cumulation for C
+    T cc = static_cast<T>(4.0) /
+           (static_cast<T>(num_settings) + static_cast<T>(4.0));  // Cumulation for C
     T cs = (mu_eff + static_cast<T>(2.0)) /
            (num_settings + mu_eff + static_cast<T>(3.0));  // Cumulation for sigma
     T c1 = static_cast<T>(2.0) /
            ((num_settings + static_cast<T>(1.3)) * (num_settings + static_cast<T>(1.3)) +
             mu_eff);  // Learning rate for rank-one update
-    T cmu = std::min(static_cast<T>(1.0) - c1,
-                     static_cast<T>(2.0) * (mu_eff - static_cast<T>(2.0) + static_cast<T>(1.0) / mu_eff) /
-                         ((num_settings + static_cast<T>(2.0)) * (num_settings + static_cast<T>(2.0)) +
-                          mu_eff));  // Learning rate for rank-mu update
-    T damps = static_cast<T>(1.0) + static_cast<T>(2.0) * std::max(static_cast<T>(0),
-                      std::sqrt((mu_eff - static_cast<T>(1.0)) / (num_settings + static_cast<T>(1.0))) -
-                          static_cast<T>(1.0)) +
+    T cmu = std::min(
+        static_cast<T>(1.0) - c1,
+        static_cast<T>(2.0) * (mu_eff - static_cast<T>(2.0) + static_cast<T>(1.0) / mu_eff) /
+            ((num_settings + static_cast<T>(2.0)) * (num_settings + static_cast<T>(2.0)) +
+             mu_eff));  // Learning rate for rank-mu update
+    T damps = static_cast<T>(1.0) +
+              static_cast<T>(2.0) * std::max(static_cast<T>(0),
+                                             std::sqrt((mu_eff - static_cast<T>(1.0)) /
+                                                       (num_settings + static_cast<T>(1.0))) -
+                                                 static_cast<T>(1.0)) +
               cs;  // Damping for sigma
 
     // Initialize mean (in search space - logits)
@@ -342,7 +343,8 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
         for (int j = 0; j < num_settings; ++j) {
             T variance = std::max(C(j, j), static_cast<T>(1e-10));
             ps[j] = (static_cast<T>(1.0) - cs) * ps[j] +
-                    std::sqrt(cs * (static_cast<T>(2.0) - cs) * mu_eff) * diff_mean[j] / std::sqrt(variance);
+                    std::sqrt(cs * (static_cast<T>(2.0) - cs) * mu_eff) * diff_mean[j] /
+                        std::sqrt(variance);
         }
 
         // Compute hsig (stalling check for pc update)
@@ -352,7 +354,9 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
         }
         T expected_ps_norm = static_cast<T>(num_settings);
         T hsig = (ps_norm_sq / expected_ps_norm / static_cast<T>(1.0) -
-                  static_cast<T>(1.0) / (static_cast<T>(1.0) - std::pow(static_cast<T>(1.0) - cs, static_cast<T>(2) * eval_count / lambda))) <
+                  static_cast<T>(1.0) /
+                      (static_cast<T>(1.0) - std::pow(static_cast<T>(1.0) - cs,
+                                                      static_cast<T>(2) * eval_count / lambda))) <
                          static_cast<T>(0.3)
                      ? static_cast<T>(1.0)
                      : static_cast<T>(0.0);
@@ -361,7 +365,8 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
         for (int j = 0; j < num_settings; ++j) {
             T variance = std::max(C(j, j), static_cast<T>(1e-10));
             pc[j] = (static_cast<T>(1.0) - cc) * pc[j] +
-                    hsig * std::sqrt(cc * (static_cast<T>(2.0) - cc) * mu_eff) * diff_mean[j] / std::sqrt(variance);
+                    hsig * std::sqrt(cc * (static_cast<T>(2.0) - cc) * mu_eff) * diff_mean[j] /
+                        std::sqrt(variance);
         }
 
         // Rank-mu update for covariance matrix
@@ -410,8 +415,8 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn,
         if (verbose && generation % 10 == 0) {
             std::cout << "Gen " << generation << ": Best Loss = " << result.best_loss
                       << " | Sigma = " << std::fixed << std::setprecision(4) << sigma
-                      << " | Evals = " << eval_count
-                      << " | Elapsed: " << std::setprecision(1) << elapsed << "s" << std::endl;
+                      << " | Evals = " << eval_count << " | Elapsed: " << std::setprecision(1)
+                      << elapsed << "s" << std::endl;
         }
 
         // Check convergence
