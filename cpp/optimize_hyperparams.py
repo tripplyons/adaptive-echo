@@ -134,14 +134,14 @@ def objective(trial, binary_path, audio_path, timeout):
     """
     Optuna objective function to minimize best_loss.
     """
-    # Suggest hyperparameters
-    population_size = trial.suggest_int("population_size", 16, 128)
-    initial_sigma = trial.suggest_float("initial_sigma", 0.5, 5.0)
-    shade_memory_size = trial.suggest_int("shade_memory_size", 2, 10)
+    # Suggest hyperparameters - optimized ranges for 51-dim problem
+    population_size = trial.suggest_int("population_size", 16, 64)
+    initial_sigma = trial.suggest_float("initial_sigma", 1.0, 3.0)
+    shade_memory_size = trial.suggest_int("shade_memory_size", 2, 8)
     archive_multiplier = trial.suggest_int("archive_multiplier", 1, 5)
-    stagnation_threshold = trial.suggest_int("stagnation_threshold", 10, 100)
-    cr_std = trial.suggest_float("cr_std", 0.01, 0.3)
-    f_scale = trial.suggest_float("f_scale", 0.01, 0.3)
+    stagnation_threshold = trial.suggest_int("stagnation_threshold", 20, 50)
+    cr_std = trial.suggest_float("cr_std", 0.05, 0.2)
+    f_scale = trial.suggest_float("f_scale", 0.05, 0.15)
 
     print(f"\nTrial {trial.number + 1}: population={population_size}, "
           f"sigma={initial_sigma:.3f}, shade_memory={shade_memory_size}, "
