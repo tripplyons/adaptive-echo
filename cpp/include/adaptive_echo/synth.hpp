@@ -13,7 +13,6 @@
 #include "adaptive_echo/envelope.hpp"
 #include "adaptive_echo/filter.hpp"
 #include "adaptive_echo/interpolation.hpp"
-#include "adaptive_echo/osc.hpp"
 
 namespace adaptive_echo {
 

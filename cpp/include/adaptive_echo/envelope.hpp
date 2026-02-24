@@ -4,7 +4,6 @@
  * Envelope generator functions for adaptive_echo.
  */
 
-#include <algorithm>
 #include <vector>
 
 #include "adaptive_echo/interpolation.hpp"

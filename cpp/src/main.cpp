@@ -10,7 +10,6 @@
 
 #include "adaptive_echo/cmaes_optimizer.hpp"
 #include "adaptive_echo/constants.hpp"
-#include "adaptive_echo/filter.hpp"
 #include "adaptive_echo/loss.hpp"
 #include "adaptive_echo/resample.hpp"
 #include "adaptive_echo/synth.hpp"
