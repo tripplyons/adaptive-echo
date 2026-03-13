@@ -19,16 +19,18 @@ template <typename T>
 BiquadCoefficients<T> calculateHighPass(T cutoff, T q, T sampleRate) {
     BiquadCoefficients<T> coeffs;
 
-    T w0 = 2.0 * M_PI * cutoff / sampleRate;
+    const T two = static_cast<T>(2.0);
+    const T one = static_cast<T>(1.0);
+    T w0 = two * static_cast<T>(M_PI) * cutoff / sampleRate;
     T cos_w0 = std::cos(w0);
-    T alpha = std::sin(w0) / (2.0 * q);
+    T alpha = std::sin(w0) / (two * q);
 
-    coeffs.b0 = (1.0 + cos_w0) / 2.0;
-    coeffs.b1 = -(1.0 + cos_w0);
-    coeffs.b2 = (1.0 + cos_w0) / 2.0;
-    coeffs.a0 = 1.0 + alpha;
-    coeffs.a1 = -2.0 * cos_w0;
-    coeffs.a2 = 1.0 - alpha;
+    coeffs.b0 = (one + cos_w0) / two;
+    coeffs.b1 = -(one + cos_w0);
+    coeffs.b2 = (one + cos_w0) / two;
+    coeffs.a0 = one + alpha;
+    coeffs.a1 = -two * cos_w0;
+    coeffs.a2 = one - alpha;
 
     // Normalize coefficients
     coeffs.b0 /= coeffs.a0;
@@ -36,7 +38,7 @@ BiquadCoefficients<T> calculateHighPass(T cutoff, T q, T sampleRate) {
     coeffs.b2 /= coeffs.a0;
     coeffs.a1 /= coeffs.a0;
     coeffs.a2 /= coeffs.a0;
-    coeffs.a0 = 1.0;
+    coeffs.a0 = one;
 
     return coeffs;
 }
@@ -46,16 +48,18 @@ template <typename T>
 BiquadCoefficients<T> calculateLowPass(T cutoff, T q, T sampleRate) {
     BiquadCoefficients<T> coeffs;
 
-    T w0 = 2.0 * M_PI * cutoff / sampleRate;
+    const T two = static_cast<T>(2.0);
+    const T one = static_cast<T>(1.0);
+    T w0 = two * static_cast<T>(M_PI) * cutoff / sampleRate;
     T cos_w0 = std::cos(w0);
-    T alpha = std::sin(w0) / (2.0 * q);
+    T alpha = std::sin(w0) / (two * q);
 
-    coeffs.b0 = (1.0 - cos_w0) / 2.0;
-    coeffs.b1 = (1.0 - cos_w0);
-    coeffs.b2 = (1.0 - cos_w0) / 2.0;
-    coeffs.a0 = 1.0 + alpha;
-    coeffs.a1 = -2.0 * cos_w0;
-    coeffs.a2 = 1.0 - alpha;
+    coeffs.b0 = (one - cos_w0) / two;
+    coeffs.b1 = one - cos_w0;
+    coeffs.b2 = (one - cos_w0) / two;
+    coeffs.a0 = one + alpha;
+    coeffs.a1 = -two * cos_w0;
+    coeffs.a2 = one - alpha;
 
     // Normalize coefficients
     coeffs.b0 /= coeffs.a0;
@@ -63,7 +67,7 @@ BiquadCoefficients<T> calculateLowPass(T cutoff, T q, T sampleRate) {
     coeffs.b2 /= coeffs.a0;
     coeffs.a1 /= coeffs.a0;
     coeffs.a2 /= coeffs.a0;
-    coeffs.a0 = 1.0;
+    coeffs.a0 = one;
 
     return coeffs;
 }
@@ -101,15 +105,19 @@ struct FilterParameters {
 template <typename T>
 FilterParameters<T> mapFilterParameters(const std::vector<T>& settings, size_t baseIndex) {
     FilterParameters<T> params;
+    const T min_frequency = static_cast<T>(20.0);
+    const T frequency_ratio = static_cast<T>(1000.0);
+    const T min_slope = static_cast<T>(6.0);
+    const T slope_span = static_cast<T>(42.0);
 
     // High-pass filter parameters
     // Exponential mapping for frequency: 20Hz to 20kHz
-    params.highPassCutoff = 20.0 * std::pow(1000.0, settings[baseIndex]);
-    params.highPassSlope = 6.0 + 42.0 * settings[baseIndex + 1];
+    params.highPassCutoff = min_frequency * std::pow(frequency_ratio, settings[baseIndex]);
+    params.highPassSlope = min_slope + slope_span * settings[baseIndex + 1];
 
     // Low-pass filter parameters
-    params.lowPassCutoff = 20.0 * std::pow(1000.0, settings[baseIndex + 2]);
-    params.lowPassSlope = 6.0 + 42.0 * settings[baseIndex + 3];
+    params.lowPassCutoff = min_frequency * std::pow(frequency_ratio, settings[baseIndex + 2]);
+    params.lowPassSlope = min_slope + slope_span * settings[baseIndex + 3];
 
     return params;
 }
@@ -120,15 +128,16 @@ FilterParameters<T> mapFilterParameters(const std::vector<T>& settings, size_t b
  */
 template <typename T>
 void applyDistortion(T amount, std::vector<T>& audio) {
-    if (amount <= 0.0) return;
+    if (amount <= static_cast<T>(0)) return;
 
     // Map amount [0, 1] to gain [1, 20] for a noticeable effect
-    T gain = static_cast<T>(1.0) + amount * static_cast<T>(19.0);
+    const T one = static_cast<T>(1.0);
+    T gain = one + amount * static_cast<T>(19.0);
 
     for (size_t i = 0; i < audio.size(); ++i) {
         T x = audio[i] * gain;
         // Soft clipping using the algebraic approximation of tanh: x / (1 + |x|)
-        audio[i] = x / (static_cast<T>(1.0) + std::abs(x));
+        audio[i] = x / (one + std::abs(x));
     }
 }
 

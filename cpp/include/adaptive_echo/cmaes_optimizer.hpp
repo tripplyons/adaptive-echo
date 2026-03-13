@@ -23,8 +23,8 @@
 
 namespace adaptive_echo {
 
-inline constexpr int kDefaultCRFMNESPopulationSize = 24;
-inline constexpr float kDefaultCRFMNESInitialSigma = 1.8f;
+inline constexpr int kDefaultCRFMNESPopulationSize = 32;
+inline constexpr float kDefaultCRFMNESInitialSigma = 2.8f;
 
 namespace detail {
 
@@ -276,7 +276,7 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
     const T eta_move_sigma = static_cast<T>(1);
     const T min_d = static_cast<T>(1e-12);
     const T min_sigma = static_cast<T>(1e-8);
-    const T max_sigma = static_cast<T>(10);
+    const T max_sigma = static_cast<T>(20);
     const T epsilon = static_cast<T>(1e-12);
 
     std::normal_distribution<T> standard_normal(static_cast<T>(0), static_cast<T>(1));

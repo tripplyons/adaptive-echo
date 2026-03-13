@@ -120,7 +120,8 @@ float hz_to_normalized_frequency(float hz) {
 }
 
 std::vector<float> retune_settings_for_note(const std::vector<float>& settings,
-                                            float reference_frequency_hz, int midi_note) {
+                                            float reference_frequency_hz, int midi_note,
+                                            bool pitch_track_osc_a, bool pitch_track_osc_b) {
     std::vector<float> retuned = settings;
     if (retuned.size() < constants::NUM_SETTINGS) {
         retuned.resize(constants::NUM_SETTINGS, 0.5f);
@@ -134,13 +135,22 @@ std::vector<float> retune_settings_for_note(const std::vector<float>& settings,
     const float semitone_offset = 12.0f * std::log2(note_hz / safe_reference);
     const float ratio = std::pow(2.0f, semitone_offset / 12.0f);
 
-    const std::array<int, 4> frequency_indices = {
-        constants::OSC_A_FREQ_LOW_INDEX, constants::OSC_A_FREQ_HIGH_INDEX,
-        constants::OSC_B_FREQ_LOW_INDEX, constants::OSC_B_FREQ_HIGH_INDEX};
+    if (pitch_track_osc_a) {
+        const std::array<int, 2> osc_a_indices = {constants::OSC_A_FREQ_LOW_INDEX,
+                                                  constants::OSC_A_FREQ_HIGH_INDEX};
+        for (int index : osc_a_indices) {
+            const auto current_hz = normalized_frequency_to_hz(retuned[static_cast<size_t>(index)]);
+            retuned[static_cast<size_t>(index)] = hz_to_normalized_frequency(current_hz * ratio);
+        }
+    }
 
-    for (int index : frequency_indices) {
-        const auto current_hz = normalized_frequency_to_hz(retuned[static_cast<size_t>(index)]);
-        retuned[static_cast<size_t>(index)] = hz_to_normalized_frequency(current_hz * ratio);
+    if (pitch_track_osc_b) {
+        const std::array<int, 2> osc_b_indices = {constants::OSC_B_FREQ_LOW_INDEX,
+                                                  constants::OSC_B_FREQ_HIGH_INDEX};
+        for (int index : osc_b_indices) {
+            const auto current_hz = normalized_frequency_to_hz(retuned[static_cast<size_t>(index)]);
+            retuned[static_cast<size_t>(index)] = hz_to_normalized_frequency(current_hz * ratio);
+        }
     }
 
     return retuned;
@@ -148,10 +158,12 @@ std::vector<float> retune_settings_for_note(const std::vector<float>& settings,
 
 std::vector<float> render_note_audio(const std::vector<float>& settings,
                                      float reference_frequency_hz, int midi_note,
-                                     double output_sample_rate) {
+                                     double output_sample_rate, bool pitch_track_osc_a,
+                                     bool pitch_track_osc_b) {
     const auto duration_seconds = max_envelope_duration_seconds(settings);
     const auto time = make_time_axis(duration_seconds, output_sample_rate);
-    auto note_settings = retune_settings_for_note(settings, reference_frequency_hz, midi_note);
+    auto note_settings = retune_settings_for_note(settings, reference_frequency_hz, midi_note,
+                                                  pitch_track_osc_a, pitch_track_osc_b);
     return synth(note_settings, time, static_cast<float>(output_sample_rate));
 }
 

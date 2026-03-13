@@ -11,6 +11,21 @@
 
 #include "adaptive_echo/engine.hpp"
 
+namespace adaptive_echo::plugin_parameters {
+inline constexpr auto kReferenceFrequencyId = "referenceFrequencyHz";
+inline constexpr auto kOscAPitchTrackId = "oscAPitchTrack";
+inline constexpr auto kOscBPitchTrackId = "oscBPitchTrack";
+inline constexpr auto kPreHighPassCutoffId = "preHighPassCutoff";
+inline constexpr auto kPreHighPassSlopeId = "preHighPassSlope";
+inline constexpr auto kPreLowPassCutoffId = "preLowPassCutoff";
+inline constexpr auto kPreLowPassSlopeId = "preLowPassSlope";
+inline constexpr auto kHighPassCutoffId = "highPassCutoff";
+inline constexpr auto kHighPassSlopeId = "highPassSlope";
+inline constexpr auto kLowPassCutoffId = "lowPassCutoff";
+inline constexpr auto kLowPassSlopeId = "lowPassSlope";
+inline constexpr auto kDistortionAmountId = "distortionAmount";
+}
+
 class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
                                          public juce::ChangeBroadcaster {
 public:
@@ -88,6 +103,7 @@ private:
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void stopTrainingThread();
+    void syncEffectParametersFromSettings(const std::vector<float>& settings);
     bool decodeAudioFile(const juce::String& path, std::vector<float>& monoSamples,
                          double& sampleRate, juce::String& errorText) const;
     void setStatusText(const juce::String& newStatus);

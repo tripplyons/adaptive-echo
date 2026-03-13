@@ -29,11 +29,15 @@ float normalized_frequency_to_hz(float normalized_value);
 float hz_to_normalized_frequency(float hz);
 
 std::vector<float> retune_settings_for_note(const std::vector<float>& settings,
-                                            float reference_frequency_hz, int midi_note);
+                                            float reference_frequency_hz, int midi_note,
+                                            bool pitch_track_osc_a = true,
+                                            bool pitch_track_osc_b = true);
 
 std::vector<float> render_note_audio(const std::vector<float>& settings,
                                      float reference_frequency_hz, int midi_note,
-                                     double output_sample_rate);
+                                     double output_sample_rate,
+                                     bool pitch_track_osc_a = true,
+                                     bool pitch_track_osc_b = true);
 
 TrainingResult train_synth(
     const std::vector<float>& target_audio,
