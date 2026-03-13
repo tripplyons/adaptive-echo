@@ -155,17 +155,18 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
     return synth(note_settings, time, static_cast<float>(output_sample_rate));
 }
 
-CMAESResult<float> train_synth(const std::vector<float>& target_audio, int population_size,
-                               float initial_sigma, float time_limit, bool verbose,
-                               TrainingProgressCallback progress_callback) {
+TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,
+                           float initial_sigma, float time_limit, bool verbose,
+                           TrainingProgressCallback progress_callback) {
     LossFunction<float> loss_fn(target_audio);
     const auto time = make_time_axis(constants::NUM_SECONDS, constants::TRAINING_SAMPLE_RATE);
     auto synth_fn = [](const std::vector<float>& settings, const std::vector<float>& time_axis) {
         return synth(settings, time_axis, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
     };
 
-    return run_cmaes_optimization<float>(loss_fn, time, synth_fn, population_size, initial_sigma,
-                                         time_limit, 10000, verbose, std::move(progress_callback));
+    return run_crfmnes_optimization<float>(loss_fn, time, synth_fn, population_size,
+                                           initial_sigma, time_limit, 10000, verbose,
+                                           std::move(progress_callback));
 }
 
 std::string serialize_settings(const std::vector<float>& settings) {

@@ -9,6 +9,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "adaptive_echo/engine.hpp"
+
 class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
                                          public juce::ChangeBroadcaster {
 public:
@@ -80,8 +82,8 @@ private:
     uint64_t voiceCounter = 0;
 
     static constexpr int maxPolyphony = 16;
-    static constexpr int trainingPopulationSize = 32;
-    static constexpr float trainingInitialSigma = 3.0f;
+    static constexpr int trainingPopulationSize = adaptive_echo::kDefaultCRFMNESPopulationSize;
+    static constexpr float trainingInitialSigma = adaptive_echo::kDefaultCRFMNESInitialSigma;
     static constexpr float trainingTimeLimitSeconds = 60.0f;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

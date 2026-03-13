@@ -1,16 +1,10 @@
 #pragma once
 
 /**
- * CMA-ES (Covariance Matrix Adaptation Evolution Strategy) Optimizer
+ * CR-FM-NES optimizer.
  *
- * A derivative-free optimization algorithm that adapts the covariance matrix
- * of the search distribution to learn problem structure and guide exploration.
- *
- * Key features:
- * - Adaptive covariance matrix learning from successful mutations
- * - Weighted recombination for mean update
- * - Cumulative step-size adaptation (CSA) for sigma control
- * - Elitism support (best solution always preserved)
+ * This implements the rank-one covariance natural evolution strategy from
+ * Nomura and Ono (2022) for the synth's bounded latent search space.
  */
 
 #include <algorithm>
@@ -22,31 +16,148 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 #include "adaptive_echo/constants.hpp"
 
-#if defined(_OPENMP)
-#include <omp.h>
-#endif
-
 namespace adaptive_echo {
 
+inline constexpr int kDefaultCRFMNESPopulationSize = 24;
+inline constexpr float kDefaultCRFMNESInitialSigma = 1.8f;
+
 namespace detail {
-inline std::mt19937& get_cmaes_rng() {
+
+inline std::mt19937& get_crfmnes_rng() {
     static thread_local std::mt19937 rng(std::random_device{}() + 123);
     return rng;
 }
-}  // namespace detail
 
 template <typename T>
-inline T sigmoid_cmaes(T x) {
+inline T sigmoid_to_unit_interval(T x) {
     x = std::clamp(x, static_cast<T>(-500), static_cast<T>(500));
-    return static_cast<T>(1.0) / (static_cast<T>(1.0) + std::exp(-x));
+    return static_cast<T>(1) / (static_cast<T>(1) + std::exp(-x));
 }
 
 template <typename T>
-struct CMAESResult {
+inline T squared_norm(const std::vector<T>& values) {
+    T sum = static_cast<T>(0);
+    for (T value : values) {
+        sum += value * value;
+    }
+    return sum;
+}
+
+template <typename T>
+inline T norm(const std::vector<T>& values) {
+    return std::sqrt(squared_norm(values));
+}
+
+template <typename T>
+inline T dot(const std::vector<T>& lhs, const std::vector<T>& rhs) {
+    T sum = static_cast<T>(0);
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        sum += lhs[i] * rhs[i];
+    }
+    return sum;
+}
+
+template <typename T>
+inline T safe_reciprocal(T value, T epsilon) {
+    if (std::abs(value) <= epsilon) {
+        return static_cast<T>(1) / (value < static_cast<T>(0) ? -epsilon : epsilon);
+    }
+    return static_cast<T>(1) / value;
+}
+
+template <typename T, typename LossFn>
+class has_compute_batch {
+    template <typename U>
+    static auto test(int)
+        -> decltype(std::declval<U&>().compute_batch(
+                        std::declval<const std::vector<std::vector<T>>&>()),
+                    std::true_type {});
+
+    template <typename>
+    static auto test(...) -> std::false_type;
+
+   public:
+    static constexpr bool value = decltype(test<LossFn>(0))::value;
+};
+
+template <typename T>
+inline T get_h_inv(int dim) {
+    auto f = [dim](T a) {
+        return ((static_cast<T>(1) + a * a) * std::exp(a * a / static_cast<T>(2)) /
+                    static_cast<T>(0.24)) -
+               static_cast<T>(10) - static_cast<T>(dim);
+    };
+    auto f_prime = [](T a) {
+        return (a * std::exp(a * a / static_cast<T>(2)) *
+                (static_cast<T>(3) + a * a)) /
+               static_cast<T>(0.24);
+    };
+
+    T h_inv = static_cast<T>(6);
+    for (int i = 0; i < 64; ++i) {
+        T value = f(h_inv);
+        if (std::abs(value) <= static_cast<T>(1e-10)) {
+            break;
+        }
+        T derivative = f_prime(h_inv);
+        if (std::abs(derivative) <= static_cast<T>(1e-16)) {
+            break;
+        }
+        T next = h_inv - static_cast<T>(0.5) * (value / derivative);
+        if (std::abs(next - h_inv) <= static_cast<T>(1e-16)) {
+            h_inv = next;
+            break;
+        }
+        h_inv = next;
+    }
+    return h_inv;
+}
+
+template <typename T>
+inline std::vector<int> sort_indices_by_fitness(const std::vector<T>& fitness) {
+    std::vector<int> indices(fitness.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(),
+              [&](int lhs, int rhs) { return fitness[lhs] < fitness[rhs]; });
+    return indices;
+}
+
+template <typename T, typename LossFn, typename SynthFn>
+inline std::vector<T> evaluate_population(
+    LossFn& loss_fn, SynthFn synth_fn, const std::vector<T>& time,
+    const std::vector<std::vector<T>>& population_logits) {
+    const size_t lambda = population_logits.size();
+    const size_t num_settings = static_cast<size_t>(adaptive_echo::constants::NUM_SETTINGS);
+
+    std::vector<std::vector<T>> generated(lambda);
+    for (size_t i = 0; i < lambda; ++i) {
+        std::vector<T> settings(num_settings);
+        for (size_t j = 0; j < num_settings; ++j) {
+            settings[j] = sigmoid_to_unit_interval(population_logits[i][j]);
+        }
+        generated[i] = synth_fn(settings, time);
+    }
+
+    if constexpr (has_compute_batch<T, LossFn>::value) {
+        return loss_fn.compute_batch(generated);
+    } else {
+        std::vector<T> fitness(lambda);
+        for (size_t i = 0; i < lambda; ++i) {
+            fitness[i] = loss_fn(generated[i]);
+        }
+        return fitness;
+    }
+}
+
+}  // namespace detail
+
+template <typename T>
+struct CRFMNESResult {
     std::vector<T> best_settings;
     T best_loss;
     int iterations_completed = 0;
@@ -55,7 +166,7 @@ struct CMAESResult {
 };
 
 template <typename T>
-struct CMAESProgress {
+struct CRFMNESProgress {
     int generation = 0;
     T best_loss = std::numeric_limits<T>::max();
     T sigma = static_cast<T>(0);
@@ -63,369 +174,390 @@ struct CMAESProgress {
     T elapsed_seconds = static_cast<T>(0);
 };
 
-/**
- * Matrix operations helper for covariance matrix
- */
-template <typename T>
-class CovarianceMatrix {
-   public:
-    explicit CovarianceMatrix(int n) : dim_(n), data_(n * n, static_cast<T>(0)) {
-        // Initialize as identity matrix
-        for (int i = 0; i < n; ++i) {
-            (*this)(i, i) = static_cast<T>(1.0);
-        }
-    }
-
-    T& operator()(int row, int col) { return data_[row * dim_ + col]; }
-    const T& operator()(int row, int col) const { return data_[row * dim_ + col]; }
-
-    int dim() const { return dim_; }
-
-    // Matrix-vector multiplication
-    std::vector<T> multiply(const std::vector<T>& x) const {
-        std::vector<T> result(dim_, static_cast<T>(0));
-        for (int i = 0; i < dim_; ++i) {
-            for (int j = 0; j < dim_; ++j) {
-                result[i] += (*this)(i, j) * x[j];
-            }
-        }
-        return result;
-    }
-
-    // Add outer product: C += alpha * v * v^T
-    void add_outer_product(const std::vector<T>& v, T alpha) {
-        for (int i = 0; i < dim_; ++i) {
-            for (int j = 0; j < dim_; ++j) {
-                (*this)(i, j) += alpha * v[i] * v[j];
-            }
-        }
-    }
-
-    // Symmetrize matrix
-    void symmetrize() {
-        for (int i = 0; i < dim_; ++i) {
-            for (int j = i + 1; j < dim_; ++j) {
-                T avg = ((*this)(i, j) + (*this)(j, i)) / static_cast<T>(2);
-                (*this)(i, j) = avg;
-                (*this)(j, i) = avg;
-            }
-        }
-    }
-
-    // Scale matrix
-    void scale(T factor) {
-        for (auto& val : data_) {
-            val *= factor;
-        }
-    }
-
-    // Get diagonal elements
-    std::vector<T> diagonal() const {
-        std::vector<T> diag(dim_);
-        for (int i = 0; i < dim_; ++i) {
-            diag[i] = (*this)(i, i);
-        }
-        return diag;
-    }
-
-    // Set diagonal elements
-    void set_diagonal(const std::vector<T>& diag) {
-        for (int i = 0; i < dim_; ++i) {
-            (*this)(i, i) = diag[i];
-        }
-    }
-
-    // Eigenvalue decomposition using power iteration (simplified)
-    // Returns eigenvalues and eigenvectors for covariance update
-    void compute_eigendecomposition(std::vector<T>& eigenvalues,
-                                    std::vector<std::vector<T>>& eigenvectors) const {
-        // Use simple approximation: assume near-diagonal dominance for efficiency
-        eigenvalues.resize(dim_);
-        eigenvectors.assign(dim_, std::vector<T>(dim_, static_cast<T>(0)));
-
-        for (int i = 0; i < dim_; ++i) {
-            // Approximate eigenvalue by diagonal element
-            eigenvalues[i] = std::max((*this)(i, i), static_cast<T>(1e-10));
-            eigenvectors[i][i] = static_cast<T>(1.0);
-        }
-
-        // Normalize eigenvalues
-        T sum = std::accumulate(eigenvalues.begin(), eigenvalues.end(), static_cast<T>(0));
-        if (sum > 0) {
-            for (auto& ev : eigenvalues) {
-                ev /= sum;
-            }
-        }
-    }
-
-    // Limit condition number by adding small value to diagonal
-    void regularize(T min_eigenvalue = static_cast<T>(1e-12)) {
-        for (int i = 0; i < dim_; ++i) {
-            (*this)(i, i) = std::max((*this)(i, i), min_eigenvalue);
-        }
-    }
-
-   private:
-    int dim_;
-    std::vector<T> data_;
-};
-
-/**
- * CMA-ES Optimizer
- *
- * Implementation of the Covariance Matrix Adaptation Evolution Strategy
- * algorithm with cumulative step-size adaptation and weighted recombination.
- *
- * @tparam T Numeric type (float or double)
- * @tparam LossFn Loss function type (callable with audio vector, returns T)
- * @tparam SynthFn Synthesis function type (callable with settings and time)
- */
 template <typename T, typename LossFn, typename SynthFn>
-inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn, const std::vector<T>& time,
-                                             SynthFn synth_fn, int lambda = -1,
-                                             T initial_sigma = static_cast<T>(1.0),
-                                             T time_limit = static_cast<T>(30.0),
-                                             int max_iterations = 10000, bool verbose = true,
-                                             std::function<void(const CMAESProgress<T>&)>
-                                                 progress_callback = {}) {
-    const int num_settings = adaptive_echo::constants::NUM_SETTINGS;
+inline CRFMNESResult<T> run_crfmnes_optimization(
+    LossFn& loss_fn, const std::vector<T>& time, SynthFn synth_fn, int lambda = -1,
+    T initial_sigma = static_cast<T>(kDefaultCRFMNESInitialSigma),
+    T time_limit = static_cast<T>(30),
+    int max_iterations = 10000, bool verbose = true,
+    std::function<void(const CRFMNESProgress<T>&)> progress_callback = {}) {
+    const int dim = adaptive_echo::constants::NUM_SETTINGS;
     auto t_start = std::chrono::steady_clock::now();
-    auto& rng = detail::get_cmaes_rng();
+    auto& rng = detail::get_crfmnes_rng();
 
-    // Default population size: 4 + floor(3 * log(n))
     if (lambda < 0) {
-        lambda = 4 + static_cast<int>(3 * std::log(num_settings));
+        lambda = kDefaultCRFMNESPopulationSize;
+    }
+    lambda = std::max(lambda, kDefaultCRFMNESPopulationSize);
+    if ((lambda % 2) != 0) {
+        ++lambda;
     }
 
-    // Number of parents (mu) - typically lambda / 2
-    int mu = lambda / 2;
+    initial_sigma = std::max(initial_sigma, static_cast<T>(1e-6));
 
-    // Recombination weights (log-scale)
-    std::vector<T> weights(mu);
-    T weights_sum = static_cast<T>(0);
-    T weights_squared_sum = static_cast<T>(0);
+    std::vector<T> mean(dim, static_cast<T>(0));
+    std::vector<T> diag_d(dim, static_cast<T>(1));
+    std::vector<T> pc(dim, static_cast<T>(0));
+    std::vector<T> ps(dim, static_cast<T>(0));
+    std::vector<T> v(dim);
 
-    for (int i = 0; i < mu; ++i) {
-        // w_i = log(mu + 0.5) - log(i + 1)
-        weights[i] = std::log(static_cast<T>(mu) + static_cast<T>(0.5)) -
-                     std::log(static_cast<T>(i) + static_cast<T>(1.0));
-        weights_sum += weights[i];
+    {
+        std::normal_distribution<T> init_dist(static_cast<T>(0),
+                                              static_cast<T>(1) / std::sqrt(static_cast<T>(dim)));
+        for (int i = 0; i < dim; ++i) {
+            v[i] = init_dist(rng);
+        }
     }
 
-    // Normalize weights
-    for (int i = 0; i < mu; ++i) {
-        weights[i] /= weights_sum;
-        weights_squared_sum += weights[i] * weights[i];
+    std::vector<T> w_rank_hat(lambda);
+    for (int i = 0; i < lambda; ++i) {
+        const T raw = std::log(static_cast<T>(lambda / 2 + 1)) -
+                      std::log(static_cast<T>(i + 1));
+        w_rank_hat[i] = std::max(raw, static_cast<T>(0));
     }
 
-    // Effective variance selection mass
-    T mu_eff = static_cast<T>(1.0) / weights_squared_sum;
+    T w_rank_hat_sum = std::accumulate(w_rank_hat.begin(), w_rank_hat.end(), static_cast<T>(0));
+    std::vector<T> w_rank(lambda);
+    for (int i = 0; i < lambda; ++i) {
+        w_rank[i] = w_rank_hat[i] / w_rank_hat_sum - static_cast<T>(1) / static_cast<T>(lambda);
+    }
 
-    // Strategy parameters
-    T cc = static_cast<T>(4.0) /
-           (static_cast<T>(num_settings) + static_cast<T>(4.0));  // Cumulation for C
-    T cs = (mu_eff + static_cast<T>(2.0)) /
-           (num_settings + mu_eff + static_cast<T>(3.0));  // Cumulation for sigma
-    T c1 = static_cast<T>(2.0) /
-           ((num_settings + static_cast<T>(1.3)) * (num_settings + static_cast<T>(1.3)) +
-            mu_eff);  // Learning rate for rank-one update
-    T cmu = std::min(
-        static_cast<T>(1.0) - c1,
-        static_cast<T>(2.0) * (mu_eff - static_cast<T>(2.0) + static_cast<T>(1.0) / mu_eff) /
-            ((num_settings + static_cast<T>(2.0)) * (num_settings + static_cast<T>(2.0)) +
-             mu_eff));  // Learning rate for rank-mu update
-    T damps = static_cast<T>(1.0) +
-              static_cast<T>(2.0) * std::max(static_cast<T>(0),
-                                             std::sqrt((mu_eff - static_cast<T>(1.0)) /
-                                                       (num_settings + static_cast<T>(1.0))) -
-                                                 static_cast<T>(1.0)) +
-              cs;  // Damping for sigma
+    T mueff_denom = static_cast<T>(0);
+    for (int i = 0; i < lambda; ++i) {
+        const T shifted = w_rank[i] + static_cast<T>(1) / static_cast<T>(lambda);
+        mueff_denom += shifted * shifted;
+    }
+    const T mueff = static_cast<T>(1) / mueff_denom;
 
-    // Initialize mean (in search space - logits)
-    std::vector<T> mean(num_settings, static_cast<T>(0.0));
+    const T cs =
+        (mueff + static_cast<T>(2)) / (static_cast<T>(dim) + mueff + static_cast<T>(5));
+    const T cc = (static_cast<T>(4) + mueff / static_cast<T>(dim)) /
+                 (static_cast<T>(dim) + static_cast<T>(4) +
+                  static_cast<T>(2) * mueff / static_cast<T>(dim));
+    const T c1_cma =
+        static_cast<T>(2) /
+        (std::pow(static_cast<T>(dim) + static_cast<T>(1.3), static_cast<T>(2)) + mueff);
+    const T chi_n = std::sqrt(static_cast<T>(dim)) *
+                    (static_cast<T>(1) - static_cast<T>(1) / (static_cast<T>(4) *
+                                                               static_cast<T>(dim)) +
+                     static_cast<T>(1) /
+                         (static_cast<T>(21) * static_cast<T>(dim) * static_cast<T>(dim)));
+    const T h_inv = detail::get_h_inv<T>(dim);
 
-    // Initialize covariance matrix
-    CovarianceMatrix<T> C(num_settings);
+    auto alpha_dist = [&](int feasible_count) {
+        return h_inv * std::min(static_cast<T>(1),
+                                std::sqrt(static_cast<T>(lambda) / static_cast<T>(dim))) *
+               std::sqrt(static_cast<T>(feasible_count) / static_cast<T>(lambda));
+    };
+    auto eta_stag_sigma = [&](int feasible_count) {
+        return std::tanh((static_cast<T>(0.024) * static_cast<T>(feasible_count) +
+                          static_cast<T>(0.7) * static_cast<T>(dim) + static_cast<T>(20)) /
+                         (static_cast<T>(dim) + static_cast<T>(12)));
+    };
+    auto eta_conv_sigma = [&](int feasible_count) {
+        return static_cast<T>(2) *
+               std::tanh((static_cast<T>(0.025) * static_cast<T>(feasible_count) +
+                          static_cast<T>(0.75) * static_cast<T>(dim) + static_cast<T>(10)) /
+                         (static_cast<T>(dim) + static_cast<T>(4)));
+    };
+    auto c1 = [&](int feasible_count) {
+        return c1_cma * static_cast<T>(dim - 5) / static_cast<T>(6) *
+               (static_cast<T>(feasible_count) / static_cast<T>(lambda));
+    };
+    auto eta_b = [&](int feasible_count) {
+        return std::tanh((std::min(static_cast<T>(0.02) * static_cast<T>(feasible_count),
+                                   static_cast<T>(3) * std::log(static_cast<T>(dim))) +
+                          static_cast<T>(5)) /
+                         (static_cast<T>(0.23) * static_cast<T>(dim) + static_cast<T>(25)));
+    };
 
-    // Evolution paths
-    std::vector<T> pc(num_settings, static_cast<T>(0.0));  // Path for covariance
-    std::vector<T> ps(num_settings, static_cast<T>(0.0));  // Path for sigma
-
-    // Step size
     T sigma = initial_sigma;
+    const T eta_m = static_cast<T>(1);
+    const T eta_move_sigma = static_cast<T>(1);
+    const T min_d = static_cast<T>(1e-12);
+    const T min_sigma = static_cast<T>(1e-8);
+    const T max_sigma = static_cast<T>(10);
+    const T epsilon = static_cast<T>(1e-12);
 
-    // Population and fitness
-    std::vector<std::vector<T>> population(lambda, std::vector<T>(num_settings));
-    std::vector<T> fitness(lambda);
-    std::vector<int> indices(lambda);
+    std::normal_distribution<T> standard_normal(static_cast<T>(0), static_cast<T>(1));
 
-    // Best solution tracking (elitism)
-    std::vector<T> best_solution(num_settings);
-    T best_fitness = std::numeric_limits<T>::max();
+    std::vector<std::vector<T>> z(lambda, std::vector<T>(dim, static_cast<T>(0)));
+    std::vector<std::vector<T>> y(lambda, std::vector<T>(dim, static_cast<T>(0)));
+    std::vector<std::vector<T>> population(lambda, std::vector<T>(dim, static_cast<T>(0)));
 
-    auto evaluate = [&](const std::vector<T>& individual) {
-        std::vector<T> settings(num_settings);
-        for (int j = 0; j < num_settings; ++j) {
-            settings[j] = sigmoid_cmaes(individual[j]);
-        }
-        auto audio = synth_fn(settings, time);
-        return loss_fn(audio);
-    };
-
-    // Generate multivariate normal sample using Cholesky-like approach
-    auto generate_sample = [&](std::mt19937& thread_rng) {
-        std::vector<T> sample(num_settings);
-        std::normal_distribution<T> dist(static_cast<T>(0.0), static_cast<T>(1.0));
-
-        // Generate standard normal
-        for (int i = 0; i < num_settings; ++i) {
-            sample[i] = dist(thread_rng);
-        }
-
-        // Transform by covariance (simplified - use diagonal approximation)
-        std::vector<T> result(num_settings);
-        for (int i = 0; i < num_settings; ++i) {
-            T variance = std::max(C(i, i), static_cast<T>(1e-10));
-            result[i] = mean[i] + sigma * std::sqrt(variance) * sample[i];
-        }
-
-        return result;
-    };
-
-    CMAESResult<T> result;
+    CRFMNESResult<T> result;
     result.best_loss = std::numeric_limits<T>::max();
+    std::vector<T> best_logits(dim, static_cast<T>(0));
     int eval_count = 0;
 
     for (int generation = 0; generation < max_iterations; ++generation) {
         auto t_now = std::chrono::steady_clock::now();
         auto elapsed =
             std::chrono::duration_cast<std::chrono::duration<T>>(t_now - t_start).count();
-        if (time_limit > 0 && elapsed > time_limit) {
+        if (time_limit > static_cast<T>(0) && elapsed > time_limit) {
             if (verbose) {
                 std::cout << "Time limit reached. Stopping." << std::endl;
             }
             break;
         }
 
-        // Generate and evaluate population
+        const int half_lambda = lambda / 2;
+        for (int i = 0; i < half_lambda; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                const T sample = standard_normal(rng);
+                z[i][j] = sample;
+                z[i + half_lambda][j] = -sample;
+            }
+        }
+
+        const T norm_v = detail::norm(v);
+        const T safe_norm_v = std::max(norm_v, epsilon);
+        const T norm_v2 = norm_v * norm_v;
+        const T norm_v4 = norm_v2 * norm_v2;
+        const T sqrt_one_plus_norm_v2 = std::sqrt(static_cast<T>(1) + norm_v2);
+        const T y_scale = sqrt_one_plus_norm_v2 - static_cast<T>(1);
+
+        std::vector<T> vbar(dim, static_cast<T>(0));
+        for (int j = 0; j < dim; ++j) {
+            vbar[j] = v[j] / safe_norm_v;
+        }
+
         for (int i = 0; i < lambda; ++i) {
-            population[i] = generate_sample(rng);
-            fitness[i] = evaluate(population[i]);
-            indices[i] = i;
-            eval_count++;
-
-            // Track best
-            if (fitness[i] < best_fitness) {
-                best_fitness = fitness[i];
-                best_solution = population[i];
+            const T projection = detail::dot(vbar, z[i]);
+            for (int j = 0; j < dim; ++j) {
+                y[i][j] = z[i][j] + y_scale * vbar[j] * projection;
+                population[i][j] = mean[j] + sigma * y[i][j] * diag_d[j];
             }
         }
 
-        // Sort by fitness (best first)
-        std::sort(indices.begin(), indices.end(),
-                  [&](int a, int b) { return fitness[a] < fitness[b]; });
+        std::vector<T> fitness =
+            detail::evaluate_population<T>(loss_fn, synth_fn, time, population);
+        eval_count += lambda;
 
-        // Save best solution (elitism)
-        if (fitness[indices[0]] < result.best_loss) {
-            result.best_loss = fitness[indices[0]];
-            result.best_settings.resize(num_settings);
-            for (int j = 0; j < num_settings; ++j) {
-                result.best_settings[j] = sigmoid_cmaes(population[indices[0]][j]);
+        std::vector<int> sorted_indices = detail::sort_indices_by_fitness(fitness);
+        const int best_index = sorted_indices.front();
+        const T best_generation_loss = fitness[best_index];
+        if (best_generation_loss < result.best_loss) {
+            result.best_loss = best_generation_loss;
+            best_logits = population[best_index];
+            result.best_settings.resize(static_cast<size_t>(dim));
+            for (int j = 0; j < dim; ++j) {
+                result.best_settings[static_cast<size_t>(j)] =
+                    detail::sigmoid_to_unit_interval(best_logits[j]);
             }
         }
 
-        // Compute new mean (weighted recombination)
-        std::vector<T> old_mean = mean;
-        std::fill(mean.begin(), mean.end(), static_cast<T>(0.0));
+        std::vector<std::vector<T>> sorted_z(lambda, std::vector<T>(dim));
+        std::vector<std::vector<T>> sorted_y(lambda, std::vector<T>(dim));
+        std::vector<std::vector<T>> sorted_population(lambda, std::vector<T>(dim));
+        std::vector<T> sorted_fitness(lambda);
+        for (int rank = 0; rank < lambda; ++rank) {
+            const size_t sorted_rank = static_cast<size_t>(rank);
+            const size_t src = static_cast<size_t>(sorted_indices[sorted_rank]);
+            sorted_z[sorted_rank] = z[src];
+            sorted_y[sorted_rank] = y[src];
+            sorted_population[sorted_rank] = population[src];
+            sorted_fitness[sorted_rank] = fitness[src];
+        }
+        z.swap(sorted_z);
+        y.swap(sorted_y);
+        population.swap(sorted_population);
+        fitness.swap(sorted_fitness);
 
-        for (int i = 0; i < mu; ++i) {
-            const auto& parent = population[indices[i]];
-            for (int j = 0; j < num_settings; ++j) {
-                mean[j] += weights[i] * parent[j];
+        int feasible_count = 0;
+        for (T value : fitness) {
+            if (std::isfinite(value)) {
+                ++feasible_count;
+            }
+        }
+        feasible_count = std::max(feasible_count, 1);
+
+        std::vector<T> weighted_z(dim, static_cast<T>(0));
+        for (int i = 0; i < lambda; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                weighted_z[j] += z[i][j] * w_rank[i];
             }
         }
 
-        // Update evolution path for sigma (cumulation)
-        std::vector<T> diff_mean(num_settings);
-        for (int j = 0; j < num_settings; ++j) {
-            diff_mean[j] = (mean[j] - old_mean[j]) / sigma;
+        const T ps_scale = std::sqrt(cs * (static_cast<T>(2) - cs) * mueff);
+        for (int j = 0; j < dim; ++j) {
+            ps[j] = (static_cast<T>(1) - cs) * ps[j] + ps_scale * weighted_z[j];
         }
+        const T ps_norm = detail::norm(ps);
 
-        // Simplified: use diagonal covariance for path update
-        for (int j = 0; j < num_settings; ++j) {
-            T variance = std::max(C(j, j), static_cast<T>(1e-10));
-            ps[j] = (static_cast<T>(1.0) - cs) * ps[j] +
-                    std::sqrt(cs * (static_cast<T>(2.0) - cs) * mu_eff) * diff_mean[j] /
-                        std::sqrt(variance);
-        }
-
-        // Compute hsig (stalling check for pc update)
-        T ps_norm_sq = static_cast<T>(0);
-        for (int j = 0; j < num_settings; ++j) {
-            ps_norm_sq += ps[j] * ps[j];
-        }
-        T expected_ps_norm = static_cast<T>(num_settings);
-        T hsig = (ps_norm_sq / expected_ps_norm / static_cast<T>(1.0) -
-                  static_cast<T>(1.0) /
-                      (static_cast<T>(1.0) - std::pow(static_cast<T>(1.0) - cs,
-                                                      static_cast<T>(2) * eval_count / lambda))) <
-                         static_cast<T>(0.3)
-                     ? static_cast<T>(1.0)
-                     : static_cast<T>(0.0);
-
-        // Update evolution path for covariance
-        for (int j = 0; j < num_settings; ++j) {
-            T variance = std::max(C(j, j), static_cast<T>(1e-10));
-            pc[j] = (static_cast<T>(1.0) - cc) * pc[j] +
-                    hsig * std::sqrt(cc * (static_cast<T>(2.0) - cc) * mu_eff) * diff_mean[j] /
-                        std::sqrt(variance);
-        }
-
-        // Rank-mu update for covariance matrix
-        C.scale(static_cast<T>(1.0) - c1 - cmu);
-
-        // Add rank-one update
-        if (hsig > static_cast<T>(0.5)) {
-            for (int i = 0; i < num_settings; ++i) {
-                for (int j = 0; j < num_settings; ++j) {
-                    C(i, j) += c1 * pc[i] * pc[j];
-                }
+        std::vector<T> weights_dist(lambda);
+        std::vector<T> weights(lambda);
+        {
+            T distance_weight_sum = static_cast<T>(0);
+            const T distance_alpha = alpha_dist(feasible_count);
+            for (int i = 0; i < lambda; ++i) {
+                weights_dist[i] =
+                    w_rank_hat[i] * std::exp(distance_alpha * detail::norm(z[i]));
+                distance_weight_sum += weights_dist[i];
+            }
+            if (distance_weight_sum <= epsilon) {
+                distance_weight_sum = static_cast<T>(1);
+            }
+            for (int i = 0; i < lambda; ++i) {
+                weights_dist[i] = weights_dist[i] / distance_weight_sum -
+                                  static_cast<T>(1) / static_cast<T>(lambda);
             }
         }
 
-        // Add rank-mu update (simplified - diagonal only for efficiency)
-        for (int k = 0; k < mu; ++k) {
-            std::vector<T> diff(num_settings);
-            for (int j = 0; j < num_settings; ++j) {
-                diff[j] = (population[indices[k]][j] - old_mean[j]) / sigma;
-            }
+        const bool moving_phase = ps_norm >= chi_n;
+        if (moving_phase) {
+            weights = weights_dist;
+        } else {
+            weights = w_rank;
+        }
 
-            for (int j = 0; j < num_settings; ++j) {
-                C(j, j) += cmu * weights[k] * diff[j] * diff[j];
+        const T eta_sigma =
+            moving_phase
+                ? eta_move_sigma
+                : (ps_norm >= static_cast<T>(0.1) * chi_n ? eta_stag_sigma(feasible_count)
+                                                          : eta_conv_sigma(feasible_count));
+
+        std::vector<T> wxm(dim, static_cast<T>(0));
+        for (int i = 0; i < lambda; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                wxm[j] += (population[i][j] - mean[j]) * weights[i];
             }
         }
 
-        // Symmetrize and regularize
-        C.symmetrize();
-        C.regularize(static_cast<T>(1e-12));
-
-        // Cumulative step-size adaptation (CSA)
-        T ps_norm = static_cast<T>(0);
-        for (int j = 0; j < num_settings; ++j) {
-            ps_norm += ps[j] * ps[j];
+        const T pc_scale = std::sqrt(cc * (static_cast<T>(2) - cc) * mueff) / sigma;
+        for (int j = 0; j < dim; ++j) {
+            pc[j] = (static_cast<T>(1) - cc) * pc[j] + pc_scale * wxm[j];
+            mean[j] += eta_m * wxm[j];
         }
-        ps_norm = std::sqrt(ps_norm);
 
-        T expected_length = std::sqrt(static_cast<T>(num_settings));
-        sigma *= std::exp((cs / damps) * (ps_norm / expected_length - static_cast<T>(1.0)));
+        std::vector<std::vector<T>> ex_y(lambda + 1, std::vector<T>(dim, static_cast<T>(0)));
+        for (int i = 0; i < lambda; ++i) {
+            ex_y[i] = y[i];
+        }
+        for (int j = 0; j < dim; ++j) {
+            ex_y[lambda][j] = pc[j] / std::max(diag_d[j], min_d);
+        }
 
-        // Clamp sigma to reasonable bounds
-        sigma = std::clamp(sigma, static_cast<T>(1e-6), static_cast<T>(10.0));
+        std::vector<T> vbarbar(dim, static_cast<T>(0));
+        T max_vbarbar = static_cast<T>(0);
+        for (int j = 0; j < dim; ++j) {
+            vbarbar[j] = vbar[j] * vbar[j];
+            max_vbarbar = std::max(max_vbarbar, vbarbar[j]);
+        }
+
+        const T gammav = static_cast<T>(1) + norm_v2;
+        const T alpha_vd =
+            std::min(static_cast<T>(1),
+                     std::sqrt(norm_v4 + (static_cast<T>(2) * gammav - std::sqrt(gammav)) /
+                                            std::max(max_vbarbar, epsilon)) /
+                         (static_cast<T>(2) + norm_v2));
+        const T b = -(static_cast<T>(1) - alpha_vd * alpha_vd) * norm_v4 / gammav +
+                    static_cast<T>(2) * alpha_vd * alpha_vd;
+
+        std::vector<T> h(dim, static_cast<T>(0));
+        std::vector<T> inv_h(dim, static_cast<T>(0));
+        std::vector<T> inv_h_vbarbar(dim, static_cast<T>(0));
+        T vbarbar_inv_h_dot = static_cast<T>(0);
+        for (int j = 0; j < dim; ++j) {
+            h[j] = static_cast<T>(2) -
+                   (b + static_cast<T>(2) * alpha_vd * alpha_vd) * vbarbar[j];
+            inv_h[j] = detail::safe_reciprocal(h[j], epsilon);
+            inv_h_vbarbar[j] = inv_h[j] * vbarbar[j];
+            vbarbar_inv_h_dot += vbarbar[j] * inv_h_vbarbar[j];
+        }
+
+        std::vector<std::vector<T>> s(lambda + 1, std::vector<T>(dim, static_cast<T>(0)));
+        std::vector<std::vector<T>> t(lambda + 1, std::vector<T>(dim, static_cast<T>(0)));
+        std::vector<T> ip_vbart(lambda + 1, static_cast<T>(0));
+
+        for (int i = 0; i < lambda + 1; ++i) {
+            const T ip_yvbar = detail::dot(vbar, ex_y[i]);
+            for (int j = 0; j < dim; ++j) {
+                t[i][j] = ex_y[i][j] * ip_yvbar -
+                          vbar[j] * (ip_yvbar * ip_yvbar + gammav) / static_cast<T>(2);
+            }
+            ip_vbart[i] = detail::dot(vbar, t[i]);
+        }
+
+        for (int i = 0; i < lambda + 1; ++i) {
+            T ip_s_step2_inv = static_cast<T>(0);
+            const T ip_yvbar = detail::dot(vbar, ex_y[i]);
+            for (int j = 0; j < dim; ++j) {
+                const T yy = ex_y[i][j] * ex_y[i][j];
+                const T yvbar_ip = ex_y[i][j] * vbar[j] * ip_yvbar;
+                const T s_step1 =
+                    yy - norm_v2 / gammav * yvbar_ip - static_cast<T>(1);
+                const T s_step2 =
+                    s_step1 -
+                    alpha_vd / gammav *
+                        ((static_cast<T>(2) + norm_v2) * t[i][j] * vbar[j] -
+                         norm_v2 * vbarbar[j] * ip_vbart[i]);
+                s[i][j] = s_step2 * inv_h[j];
+                ip_s_step2_inv += inv_h_vbarbar[j] * s_step2;
+            }
+
+            const T correction =
+                b / (static_cast<T>(1) + b * vbarbar_inv_h_dot) * ip_s_step2_inv;
+            for (int j = 0; j < dim; ++j) {
+                s[i][j] -= inv_h_vbarbar[j] * correction;
+            }
+        }
+
+        for (int i = 0; i < lambda + 1; ++i) {
+            T ip_svbarbar = static_cast<T>(0);
+            for (int j = 0; j < dim; ++j) {
+                ip_svbarbar += vbarbar[j] * s[i][j];
+            }
+            for (int j = 0; j < dim; ++j) {
+                t[i][j] -= alpha_vd *
+                           ((static_cast<T>(2) + norm_v2) * s[i][j] * vbar[j] -
+                            vbar[j] * ip_svbarbar);
+            }
+        }
+
+        std::vector<T> exw(lambda + 1, static_cast<T>(0));
+        const T eta_b_value = eta_b(feasible_count);
+        for (int i = 0; i < lambda; ++i) {
+            exw[i] = eta_b_value * weights[i];
+        }
+        exw[lambda] = c1(feasible_count);
+
+        std::vector<T> delta_v(dim, static_cast<T>(0));
+        std::vector<T> delta_d(dim, static_cast<T>(0));
+        for (int i = 0; i < lambda + 1; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                delta_v[j] += t[i][j] * exw[i];
+                delta_d[j] += s[i][j] * exw[i];
+            }
+        }
+
+        for (int j = 0; j < dim; ++j) {
+            v[j] += delta_v[j] / safe_norm_v;
+            diag_d[j] = std::max(diag_d[j] + delta_d[j] * diag_d[j], min_d);
+        }
+
+        const T det_scale =
+            std::exp(std::accumulate(diag_d.begin(), diag_d.end(), static_cast<T>(0),
+                                     [](T acc, T value) { return acc + std::log(value); }) /
+                         static_cast<T>(dim) +
+                     std::log(static_cast<T>(1) + detail::squared_norm(v)) /
+                         (static_cast<T>(2) * static_cast<T>(dim)));
+        for (int j = 0; j < dim; ++j) {
+            diag_d[j] /= det_scale;
+        }
+
+        T g_sigma = static_cast<T>(0);
+        for (int i = 0; i < lambda; ++i) {
+            g_sigma += (detail::squared_norm(z[i]) - static_cast<T>(dim)) * weights[i];
+        }
+        g_sigma /= static_cast<T>(dim);
+        sigma *= std::exp(eta_sigma * static_cast<T>(0.5) * g_sigma);
+        sigma = std::clamp(sigma, min_sigma, max_sigma);
 
         result.iterations_completed = generation + 1;
 
         if (progress_callback) {
-            progress_callback(CMAESProgress<T> {
+            progress_callback(CRFMNESProgress<T> {
                 generation + 1,
                 result.best_loss,
                 sigma,
@@ -440,28 +572,13 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn, const std::vector<
                       << " | Evals = " << eval_count << " | Elapsed: " << std::setprecision(1)
                       << elapsed << "s" << std::endl;
         }
-
-        // Check convergence
-        if (sigma < static_cast<T>(1e-5)) {
-            if (verbose) {
-                std::cout << "Converged (sigma < 1e-5). Stopping." << std::endl;
-            }
-            break;
-        }
     }
 
-    // Ensure we return the absolute best (elitism)
-    if (best_fitness < result.best_loss) {
-        result.best_loss = best_fitness;
-        result.best_settings.resize(num_settings);
-        for (int j = 0; j < num_settings; ++j) {
-            result.best_settings[j] = sigmoid_cmaes(best_solution[j]);
-        }
+    if (result.best_settings.empty()) {
+        result.best_settings.resize(static_cast<size_t>(dim), static_cast<T>(0.5));
     }
-
     result.final_sigma = sigma;
     result.final_eval_count = eval_count;
-
     return result;
 }
 

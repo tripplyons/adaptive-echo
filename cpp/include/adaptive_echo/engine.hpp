@@ -9,7 +9,8 @@
 
 namespace adaptive_echo {
 
-using TrainingProgress = CMAESProgress<float>;
+using TrainingResult = CRFMNESResult<float>;
+using TrainingProgress = CRFMNESProgress<float>;
 using TrainingProgressCallback = std::function<void(const TrainingProgress&)>;
 
 std::vector<float> default_settings();
@@ -34,10 +35,12 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
                                      float reference_frequency_hz, int midi_note,
                                      double output_sample_rate);
 
-CMAESResult<float> train_synth(const std::vector<float>& target_audio, int population_size = 32,
-                               float initial_sigma = 3.0f, float time_limit = 60.0f,
-                               bool verbose = false,
-                               TrainingProgressCallback progress_callback = {});
+TrainingResult train_synth(
+    const std::vector<float>& target_audio,
+    int population_size = kDefaultCRFMNESPopulationSize,
+    float initial_sigma = kDefaultCRFMNESInitialSigma, float time_limit = 60.0f,
+    bool verbose = false,
+    TrainingProgressCallback progress_callback = {});
 
 std::string serialize_settings(const std::vector<float>& settings);
 
