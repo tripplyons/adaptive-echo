@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "PluginEditor.h"
@@ -182,6 +183,7 @@ bool AdaptiveEchoAudioProcessor::loadSampleFromPath(const juce::String& path) {
         samplePath = path;
         statusText = "Sample loaded. Ready to train.";
     }
+    resetTrainingProgress();
 
     sendChangeMessage();
     updateHostDisplay();
@@ -201,15 +203,37 @@ void AdaptiveEchoAudioProcessor::beginTraining() {
         sampleSnapshot = loadedSample;
         statusText = "Training in progress...";
     }
+    resetTrainingProgress();
     sendChangeMessage();
 
     trainingThread = std::thread([this, sample = std::move(sampleSnapshot)]() mutable {
-        auto result = adaptive_echo::train_synth(sample, 32, 3.0f, 60.0f, false);
+        auto result = adaptive_echo::train_synth(
+            sample, trainingPopulationSize, trainingInitialSigma, trainingTimeLimitSeconds, false,
+            [this](const adaptive_echo::TrainingProgress& progress) {
+                trainingGeneration = progress.generation;
+                trainingEvalCount = progress.eval_count;
+                trainingBestLoss = progress.best_loss;
+                trainingSigma = progress.sigma;
+                trainingElapsedSeconds = progress.elapsed_seconds;
+                const auto normalizedProgress =
+                    trainingTimeLimitSeconds > 0.0f
+                        ? std::clamp(progress.elapsed_seconds / trainingTimeLimitSeconds, 0.0f,
+                                     1.0f)
+                        : 0.0f;
+                trainingProgress = normalizedProgress;
+            });
         {
             const std::lock_guard<std::mutex> lock(stateMutex);
             trainedSettings = std::move(result.best_settings);
-            statusText = "Training complete.";
+            statusText = juce::String::formatted(
+                "Training complete. Best loss %.4f after %d generations.", result.best_loss,
+                result.iterations_completed);
         }
+        trainingGeneration = result.iterations_completed;
+        trainingEvalCount = result.final_eval_count;
+        trainingBestLoss = result.best_loss;
+        trainingSigma = result.final_sigma;
+        trainingProgress = 1.0f;
         trainingActive = false;
         sendChangeMessage();
         updateHostDisplay();
@@ -235,6 +259,33 @@ juce::String AdaptiveEchoAudioProcessor::getStatusText() const {
     return statusText;
 }
 
+double AdaptiveEchoAudioProcessor::getTrainingProgress() const {
+    return static_cast<double>(trainingProgress.load());
+}
+
+juce::String AdaptiveEchoAudioProcessor::getTrainingProgressText() const {
+    const auto generation = trainingGeneration.load();
+    const auto evalCount = trainingEvalCount.load();
+    const auto bestLoss = trainingBestLoss.load();
+    const auto sigma = trainingSigma.load();
+    const auto elapsedSeconds = trainingElapsedSeconds.load();
+    const auto trainingNow = isTraining();
+
+    if (generation <= 0 && evalCount <= 0 && !trainingNow) {
+        return {};
+    }
+
+    if (trainingNow) {
+        return juce::String::formatted(
+            "Generation %d  |  Loss %.4f  |  Sigma %.3f  |  Evals %d  |  %.1fs / %.0fs",
+            generation, bestLoss, sigma, evalCount, elapsedSeconds, trainingTimeLimitSeconds);
+    }
+
+    return juce::String::formatted(
+        "Completed in %.1fs  |  Generations %d  |  Loss %.4f  |  Sigma %.3f  |  Evals %d",
+        elapsedSeconds, generation, bestLoss, sigma, evalCount);
+}
+
 juce::MidiKeyboardState& AdaptiveEchoAudioProcessor::getKeyboardState() {
     return keyboardState;
 }
@@ -252,6 +303,15 @@ void AdaptiveEchoAudioProcessor::stopTrainingThread() {
 void AdaptiveEchoAudioProcessor::setStatusText(const juce::String& newStatus) {
     const std::lock_guard<std::mutex> lock(stateMutex);
     statusText = newStatus;
+}
+
+void AdaptiveEchoAudioProcessor::resetTrainingProgress() {
+    trainingGeneration = 0;
+    trainingEvalCount = 0;
+    trainingBestLoss = 0.0f;
+    trainingSigma = trainingInitialSigma;
+    trainingElapsedSeconds = 0.0f;
+    trainingProgress = 0.0f;
 }
 
 std::vector<float> AdaptiveEchoAudioProcessor::getCurrentSettingsSnapshot() const {

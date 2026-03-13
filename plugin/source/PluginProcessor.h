@@ -45,6 +45,8 @@ public:
 
     juce::String getSamplePath() const;
     juce::String getStatusText() const;
+    double getTrainingProgress() const;
+    juce::String getTrainingProgressText() const;
     juce::MidiKeyboardState& getKeyboardState();
     juce::AudioProcessorValueTreeState& getParameters();
 
@@ -67,17 +69,27 @@ private:
 
     std::vector<ActiveVoice> activeVoices;
     std::atomic<bool> trainingActive { false };
+    std::atomic<int> trainingGeneration { 0 };
+    std::atomic<int> trainingEvalCount { 0 };
+    std::atomic<float> trainingBestLoss { 0.0f };
+    std::atomic<float> trainingSigma { 0.0f };
+    std::atomic<float> trainingElapsedSeconds { 0.0f };
+    std::atomic<float> trainingProgress { 0.0f };
     std::thread trainingThread;
     double currentSampleRate = 48000.0;
     uint64_t voiceCounter = 0;
 
     static constexpr int maxPolyphony = 16;
+    static constexpr int trainingPopulationSize = 32;
+    static constexpr float trainingInitialSigma = 3.0f;
+    static constexpr float trainingTimeLimitSeconds = 60.0f;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void stopTrainingThread();
     bool decodeAudioFile(const juce::String& path, std::vector<float>& monoSamples,
                          double& sampleRate, juce::String& errorText) const;
     void setStatusText(const juce::String& newStatus);
+    void resetTrainingProgress();
     std::vector<float> getCurrentSettingsSnapshot() const;
     float getReferenceFrequency() const;
     void startVoice(int midiNote, float velocity);

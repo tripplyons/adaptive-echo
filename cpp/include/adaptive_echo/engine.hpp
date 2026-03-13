@@ -1,12 +1,16 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "adaptive_echo/cmaes_optimizer.hpp"
 
 namespace adaptive_echo {
+
+using TrainingProgress = CMAESProgress<float>;
+using TrainingProgressCallback = std::function<void(const TrainingProgress&)>;
 
 std::vector<float> default_settings();
 
@@ -32,7 +36,8 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
 
 CMAESResult<float> train_synth(const std::vector<float>& target_audio, int population_size = 32,
                                float initial_sigma = 3.0f, float time_limit = 60.0f,
-                               bool verbose = false);
+                               bool verbose = false,
+                               TrainingProgressCallback progress_callback = {});
 
 std::string serialize_settings(const std::vector<float>& settings);
 

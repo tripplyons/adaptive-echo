@@ -24,6 +24,13 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     statusLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(statusLabel);
 
+    trainingProgressLabel.setJustificationType(juce::Justification::centredLeft);
+    trainingProgressLabel.setColour(juce::Label::textColourId, juce::Colour::fromRGB(91, 74, 58));
+    addAndMakeVisible(trainingProgressLabel);
+
+    trainingProgressBar.setTextToDisplay({});
+    addAndMakeVisible(trainingProgressBar);
+
     frequencyLabel.setText("Reference Frequency (Hz)", juce::dontSendNotification);
     addAndMakeVisible(frequencyLabel);
 
@@ -38,10 +45,12 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
         audioProcessor.getParameters(), "referenceFrequencyHz", referenceFrequencySlider);
 
     audioProcessor.addChangeListener(this);
+    startTimerHz(10);
     refreshFromProcessor();
 }
 
 AdaptiveEchoAudioProcessorEditor::~AdaptiveEchoAudioProcessorEditor() {
+    stopTimer();
     audioProcessor.removeChangeListener(this);
     loadSampleButton.removeListener(this);
     trainButton.removeListener(this);
@@ -76,7 +85,11 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     samplePathLabel.setBounds(bounds.removeFromTop(28));
     bounds.removeFromTop(8);
     statusLabel.setBounds(bounds.removeFromTop(24));
-    bounds.removeFromTop(20);
+    bounds.removeFromTop(8);
+    trainingProgressLabel.setBounds(bounds.removeFromTop(24));
+    bounds.removeFromTop(8);
+    trainingProgressBar.setBounds(bounds.removeFromTop(22));
+    bounds.removeFromTop(18);
 
     auto controlsRow = bounds.removeFromTop(140);
     auto frequencyArea = controlsRow.removeFromLeft(220);
@@ -113,11 +126,23 @@ void AdaptiveEchoAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadc
     }
 }
 
+void AdaptiveEchoAudioProcessorEditor::timerCallback() {
+    refreshFromProcessor();
+}
+
 void AdaptiveEchoAudioProcessorEditor::refreshFromProcessor() {
     const auto samplePath = audioProcessor.getSamplePath();
     samplePathLabel.setText(samplePath.isNotEmpty() ? samplePath : "No sample loaded",
                             juce::dontSendNotification);
     statusLabel.setText(audioProcessor.getStatusText(), juce::dontSendNotification);
+    trainingProgressLabel.setText(audioProcessor.getTrainingProgressText(),
+                                  juce::dontSendNotification);
+    trainingProgressValue = audioProcessor.getTrainingProgress();
+    const auto shouldShowProgress =
+        audioProcessor.isTraining() || trainingProgressValue > 0.0 ||
+        trainingProgressLabel.getText().isNotEmpty();
+    trainingProgressLabel.setVisible(shouldShowProgress);
+    trainingProgressBar.setVisible(shouldShowProgress);
     trainButton.setEnabled(audioProcessor.canTrain());
     repaint();
 }

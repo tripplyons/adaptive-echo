@@ -8,7 +8,8 @@
 
 class AdaptiveEchoAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                private juce::Button::Listener,
-                                               private juce::ChangeListener {
+                                               private juce::ChangeListener,
+                                               private juce::Timer {
 public:
     explicit AdaptiveEchoAudioProcessorEditor(AdaptiveEchoAudioProcessor&);
     ~AdaptiveEchoAudioProcessorEditor() override;
@@ -22,7 +23,10 @@ private:
     juce::TextButton trainButton { "Train" };
     juce::Label samplePathLabel;
     juce::Label statusLabel;
+    juce::Label trainingProgressLabel;
     juce::Label frequencyLabel;
+    double trainingProgressValue = 0.0;
+    juce::ProgressBar trainingProgressBar { trainingProgressValue };
     juce::Slider referenceFrequencySlider;
     juce::MidiKeyboardComponent keyboardComponent;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> frequencyAttachment;
@@ -30,6 +34,7 @@ private:
 
     void buttonClicked(juce::Button* button) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    void timerCallback() override;
     void refreshFromProcessor();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessorEditor)

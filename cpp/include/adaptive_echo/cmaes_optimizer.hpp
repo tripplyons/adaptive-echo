@@ -16,8 +16,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <vector>
@@ -50,6 +52,15 @@ struct CMAESResult {
     int iterations_completed = 0;
     T final_sigma = static_cast<T>(0);
     int final_eval_count = 0;
+};
+
+template <typename T>
+struct CMAESProgress {
+    int generation = 0;
+    T best_loss = std::numeric_limits<T>::max();
+    T sigma = static_cast<T>(0);
+    int eval_count = 0;
+    T elapsed_seconds = static_cast<T>(0);
 };
 
 /**
@@ -174,7 +185,9 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn, const std::vector<
                                              SynthFn synth_fn, int lambda = -1,
                                              T initial_sigma = static_cast<T>(1.0),
                                              T time_limit = static_cast<T>(30.0),
-                                             int max_iterations = 10000, bool verbose = true) {
+                                             int max_iterations = 10000, bool verbose = true,
+                                             std::function<void(const CMAESProgress<T>&)>
+                                                 progress_callback = {}) {
     const int num_settings = adaptive_echo::constants::NUM_SETTINGS;
     auto t_start = std::chrono::steady_clock::now();
     auto& rng = detail::get_cmaes_rng();
@@ -410,6 +423,16 @@ inline CMAESResult<T> run_cmaes_optimization(LossFn& loss_fn, const std::vector<
         sigma = std::clamp(sigma, static_cast<T>(1e-6), static_cast<T>(10.0));
 
         result.iterations_completed = generation + 1;
+
+        if (progress_callback) {
+            progress_callback(CMAESProgress<T> {
+                generation + 1,
+                result.best_loss,
+                sigma,
+                eval_count,
+                elapsed,
+            });
+        }
 
         if (verbose && generation % 10 == 0) {
             std::cout << "Gen " << generation << ": Best Loss = " << result.best_loss
