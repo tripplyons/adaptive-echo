@@ -90,7 +90,7 @@ juce_add_plugin(AdaptiveEcho
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE AdEc
     PLUGIN_CODE AdEo
-    FORMATS VST3 Standalone
+    FORMATS AU VST3 Standalone
     PRODUCT_NAME "Adaptive Echo"
 )
 
