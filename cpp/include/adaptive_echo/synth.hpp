@@ -199,7 +199,9 @@ inline void osc_uniform_optimized(const std::vector<T>& time, const std::vector<
  * Optimized synthesizer with minimal allocations.
  */
 template <typename T>
-inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vector<T>& times) {
+inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vector<T>& times,
+                                 T output_sample_rate =
+                                     static_cast<T>(adaptive_echo::constants::OUTPUT_SAMPLE_RATE)) {
     size_t n = times.size();
     thread_local detail::SynthScratch<T> scratch;
     scratch.resize(n);
@@ -253,24 +255,27 @@ inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vect
 
     applyDistortion(settings[50], result);
     FilterParameters<T> filter_params = mapFilterParameters(settings, 46);
-    applyFilters(filter_params, result,
-                 static_cast<T>(adaptive_echo::constants::OUTPUT_SAMPLE_RATE));
+    applyFilters(filter_params, result, output_sample_rate);
 
     return result;
 }
 
 template <typename T>
-inline std::vector<T> synth(const std::vector<T>& settings, const std::vector<T>& times) {
-    return synth_fast(settings, times);
+inline std::vector<T> synth(const std::vector<T>& settings, const std::vector<T>& times,
+                            T output_sample_rate =
+                                static_cast<T>(adaptive_echo::constants::OUTPUT_SAMPLE_RATE)) {
+    return synth_fast(settings, times, output_sample_rate);
 }
 
 template <typename T>
 inline std::vector<std::vector<T>> synth_parallel(const std::vector<std::vector<T>>& settings_batch,
-                                                  const std::vector<T>& times) {
+                                                  const std::vector<T>& times,
+                                                  T output_sample_rate = static_cast<T>(
+                                                      adaptive_echo::constants::OUTPUT_SAMPLE_RATE)) {
     std::vector<std::vector<T>> results;
     results.reserve(settings_batch.size());
     for (const auto& settings : settings_batch) {
-        results.push_back(synth(settings, times));
+        results.push_back(synth(settings, times, output_sample_rate));
     }
     return results;
 }

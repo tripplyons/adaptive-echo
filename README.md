@@ -1,54 +1,43 @@
 # Adaptive Echo
 
-A digital synthesizer capable of learning from sounds.
+Adaptive Echo is a JUCE-based audio generator plugin that learns a sampled sound with the existing CMA-ES optimizer and replays it as a tuned one-shot synthesizer.
 
-## Vision
+## Building
 
-Adaptive Echo is a synthesizer that can listen to a sound and recreate it using optimization techniques. After recreating a sound, users can modify the settings like a traditional synthesizer. It is licensed under the MIT License, meaning it is free to use for any purpose.
+The project builds from the repository root and fetches JUCE automatically through CMake.
 
-## Project Structure
-
-- **[cpp/](cpp)**: The core C++ synthesizer engine and hybrid evolution optimizer. This is the primary implementation of the synthesizer DSP and the learning algorithm.
-- **[docs/](docs)**: Project documentation, including synthesizer settings and architectural details.
-
-## Getting Started (C++ Engine)
-
-The core engine is located in the `cpp` directory. It uses CMake for building and requires a C++17 compliant compiler.
-
-### Prerequisites
-- CMake 3.14+
-- C++17 compiler (GCC, Clang, or MSVC)
-- OpenMP (optional, for parallel optimization)
-
-### Building
-You can use the provided build script:
 ```bash
-cd cpp
 ./build.sh
 ```
 
-Or manually with CMake:
+Manual build:
+
 ```bash
-cd cpp
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
 ```
 
-### Running the Optimizer
-```bash
-./generate_sound [target_audio.wav]
-```
+The build produces `VST3` and `Standalone` targets. `COPY_PLUGIN_AFTER_BUILD` is enabled, so JUCE copies the plugin into the default install location after a successful build.
+
+## Plugin Interface
+
+- Load a training sample from disk
+- Choose the reference frequency used to tune the learned sound
+- Train the synthesizer with the existing optimizer logic
+- Play notes from the JUCE on-screen keyboard or host MIDI
+
+Each note renders as a one-shot voice that ignores note-off and continues until the learned envelopes finish.
+
+## Project Structure
+
+- **[cpp/](cpp)**: Core DSP, optimizer, and shared engine helpers.
+- **[plugin/](plugin)**: JUCE plugin processor/editor sources.
+- **[docs/](docs)**: Project documentation.
 
 ## Documentation
 
-See the [docs](docs/README.md) folder for more information:
-- [Synthesizer Settings](docs/synthesizer-settings.md)
+See [docs/README.md](docs/README.md) for additional details, including [synthesizer settings](docs/synthesizer-settings.md).
 
 ## License
 
 Adaptive Echo is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-See [the contribution guidelines](CONTRIBUTING.md) for details.
