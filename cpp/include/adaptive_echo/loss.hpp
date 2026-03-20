@@ -432,147 +432,220 @@ inline T log_magnitude_loss(const std::vector<T>& x_mag, const std::vector<T>& y
     return mag_loss / static_cast<T>(n);
 }
 
-/**
- * Fast vectorized normalization (zero mean, unit variance).
- */
 template <typename T>
-inline std::vector<T> normalize_signal(const std::vector<T>& x) {
-    if (x.empty()) return x;
+inline T weighted_l1_loss(const std::vector<T>& x, const std::vector<T>& y,
+                          const std::vector<T>& weights, size_t num_features) {
+    const size_t n = x.size();
+    if (n == 0 || n != y.size() || num_features == 0) return static_cast<T>(0);
 
-    // Compute mean
-    T mean = vectorized_mean(x);
-
-    // Subtract mean
-    std::vector<T> result(x.size());
+    const size_t num_frames = n / num_features;
+    T loss = static_cast<T>(0);
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* x_ptr = &x[frame * num_features];
+        const T* y_ptr = &y[frame * num_features];
 #if defined(HAS_OPENMP)
-#pragma omp simd
+#pragma omp simd reduction(+ : loss)
 #endif
-    for (size_t i = 0; i < x.size(); ++i) {
-        result[i] = x[i] - mean;
+        for (size_t feature = 0; feature < num_features; ++feature) {
+            loss += weights[feature] * std::abs(x_ptr[feature] - y_ptr[feature]);
+        }
     }
 
-    // Compute std and normalize
-    T var = vectorized_variance(result, static_cast<T>(0));
-    T std = std::sqrt(var);
-    T inv_std = static_cast<T>(1.0) / (std + static_cast<T>(1e-8));
-
-#if defined(HAS_OPENMP)
-#pragma omp simd
-#endif
-    for (size_t i = 0; i < result.size(); ++i) {
-        result[i] *= inv_std;
-    }
-
-    return result;
+    return loss / static_cast<T>(n);
 }
 
-/**
- * Downscale spectrogram by averaging frequency bins.
- * 4x downscale: average every 4 bins into 1 bin.
- * 16x downscale: average every 16 bins into 1 bin.
- */
 template <typename T>
-inline std::vector<T> downscale_spectrogram(const std::vector<T>& spec, size_t num_freqs,
-                                            size_t downscale_factor) {
-    if (spec.empty() || num_freqs == 0 || downscale_factor <= 1) return spec;
+inline std::vector<size_t> compute_log_band_edges(size_t num_freqs, size_t num_bands) {
+    if (num_freqs == 0) {
+        return {0};
+    }
 
-    size_t num_frames = spec.size() / num_freqs;
-    size_t new_num_freqs = num_freqs / downscale_factor;
-    std::vector<T> downscaled(num_frames * new_num_freqs);
+    num_bands = std::max<size_t>(1, std::min(num_bands, num_freqs));
+    std::vector<size_t> edges(num_bands + 1);
+    edges[0] = 0;
+    edges[num_bands] = num_freqs;
+
+    if (num_bands == 1) {
+        return edges;
+    }
+
+    const T min_bin = static_cast<T>(1);
+    const T max_bin = static_cast<T>(std::max<size_t>(1, num_freqs - 1));
+
+    for (size_t band = 1; band < num_bands; ++band) {
+        const T alpha = static_cast<T>(band) / static_cast<T>(num_bands);
+        const T log_bin = std::exp(std::log(min_bin) +
+                                   alpha * (std::log(max_bin) - std::log(min_bin)));
+        const size_t edge = static_cast<size_t>(std::round(log_bin));
+        edges[band] = std::clamp(edge, edges[band - 1] + 1, num_freqs - (num_bands - band));
+    }
+
+    return edges;
+}
+
+template <typename T>
+inline std::vector<T> band_average_spectrogram(const std::vector<T>& spec, size_t num_freqs,
+                                               const std::vector<size_t>& band_edges,
+                                               const std::vector<T>& freq_weights) {
+    if (spec.empty() || num_freqs == 0 || band_edges.size() < 2 || freq_weights.size() != num_freqs) {
+        return {};
+    }
+
+    const size_t num_frames = spec.size() / num_freqs;
+    const size_t num_bands = band_edges.size() - 1;
+    std::vector<T> band_spec(num_frames * num_bands, static_cast<T>(0));
 
     for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* frame_data = &spec[frame * num_freqs];
-        T* dest = &downscaled[frame * new_num_freqs];
+        const T* frame_ptr = &spec[frame * num_freqs];
+        T* band_ptr = &band_spec[frame * num_bands];
 
-        for (size_t new_f = 0; new_f < new_num_freqs; ++new_f) {
-            size_t start_f = new_f * downscale_factor;
-            T sum = 0;
-            for (size_t i = 0; i < downscale_factor; ++i) {
-                sum += frame_data[start_f + i];
+        for (size_t band = 0; band < num_bands; ++band) {
+            const size_t start = band_edges[band];
+            const size_t end = band_edges[band + 1];
+            T sum = static_cast<T>(0);
+            T weight_sum = static_cast<T>(0);
+            for (size_t freq = start; freq < end; ++freq) {
+                sum += frame_ptr[freq] * freq_weights[freq];
+                weight_sum += freq_weights[freq];
             }
-            dest[new_f] = sum / static_cast<T>(downscale_factor);
+            if (weight_sum > static_cast<T>(0)) {
+                band_ptr[band] = sum / weight_sum;
+            } else {
+                band_ptr[band] = sum / static_cast<T>(std::max<size_t>(1, end - start));
+            }
         }
     }
 
-    return downscaled;
+    return band_spec;
 }
 
-/**
- * Helper to aggregate weights for downscaled spectrograms.
- * Sums original weights into downscaled bins.
- */
 template <typename T>
-inline std::vector<T> aggregate_weights(const std::vector<T>& original_weights, size_t factor,
-                                        size_t new_num_freqs) {
-    std::vector<T> aggregated(new_num_freqs);
-    for (size_t f = 0; f < new_num_freqs; ++f) {
-        T sum = 0;
-        for (size_t j = 0; j < factor; ++j) {
-            sum += original_weights[f * factor + j];
+inline std::vector<T> aggregate_band_weights(const std::vector<T>& freq_weights,
+                                             const std::vector<size_t>& band_edges) {
+    if (band_edges.size() < 2) {
+        return {};
+    }
+
+    const size_t num_bands = band_edges.size() - 1;
+    std::vector<T> band_weights(num_bands, static_cast<T>(0));
+    for (size_t band = 0; band < num_bands; ++band) {
+        const size_t start = band_edges[band];
+        const size_t end = band_edges[band + 1];
+        T sum = static_cast<T>(0);
+        for (size_t freq = start; freq < end; ++freq) {
+            sum += freq_weights[freq];
         }
-        aggregated[f] = sum;
+        // Preserve the full perceptual mass of each band so the coarse losses
+        // reflect how much weighted frequency content the band represents.
+        band_weights[band] = sum;
     }
-    return aggregated;
+
+    T total = std::accumulate(band_weights.begin(), band_weights.end(), static_cast<T>(0));
+    if (total > static_cast<T>(0)) {
+        const T scale = static_cast<T>(num_bands) / total;
+        for (T& weight : band_weights) {
+            weight *= scale;
+        }
+    }
+
+    return band_weights;
 }
 
-/**
- * Compute downscaled loss for a given factor (4x or 16x).
- * Returns the combined spectral convergence + log-magnitude loss.
- */
 template <typename T>
-inline T compute_downscale_loss(const std::vector<T>& x_stft, const std::vector<T>& y_stft,
-                                const std::vector<T>& original_weights, size_t num_freqs,
-                                size_t factor, T y_stft_mean) {
-    size_t new_num_freqs = num_freqs / factor;
-    auto x_stft_down = detail::downscale_spectrogram(x_stft, num_freqs, factor);
-
-    if (x_stft_down.size() != y_stft.size()) {
-        return static_cast<T>(0);
+inline std::vector<T> perceptual_cepstral_weights(const std::vector<T>& source_weights,
+                                                  size_t num_coeffs) {
+    if (source_weights.empty() || num_coeffs == 0) {
+        return {};
     }
 
-    auto weights_down = aggregate_weights(original_weights, factor, new_num_freqs);
+    const size_t num_bins = source_weights.size();
+    const T dct_scale = static_cast<T>(M_PI) / static_cast<T>(num_bins);
+    std::vector<T> weights(num_coeffs, static_cast<T>(0));
 
-    T sc_loss = detail::spectral_convergence_loss(x_stft_down, y_stft, y_stft_mean, weights_down,
-                                                  new_num_freqs);
-    T mag_loss = detail::log_magnitude_loss(x_stft_down, y_stft, weights_down, new_num_freqs);
+    for (size_t coeff = 0; coeff < num_coeffs; ++coeff) {
+        T weighted_basis_energy = static_cast<T>(0);
+        for (size_t bin = 0; bin < num_bins; ++bin) {
+            const T angle = dct_scale * (static_cast<T>(bin) + static_cast<T>(0.5)) *
+                            static_cast<T>(coeff);
+            weighted_basis_energy += source_weights[bin] * std::abs(std::cos(angle));
+        }
+        weights[coeff] = weighted_basis_energy / static_cast<T>(num_bins);
+    }
 
-    return static_cast<T>(0.9) * sc_loss + static_cast<T>(0.1) * mag_loss;
+    T total = std::accumulate(weights.begin(), weights.end(), static_cast<T>(0));
+    if (total > static_cast<T>(0)) {
+        const T scale = static_cast<T>(num_coeffs) / total;
+        for (T& weight : weights) {
+            weight *= scale;
+        }
+    }
+
+    return weights;
+}
+
+template <typename T>
+inline std::vector<T> weighted_cepstrum_spectrogram(const std::vector<T>& band_spec, size_t num_bands,
+                                                    const std::vector<T>& band_weights,
+                                                    size_t num_coeffs) {
+    if (band_spec.empty() || num_bands == 0 || num_coeffs == 0) {
+        return {};
+    }
+
+    const size_t num_frames = band_spec.size() / num_bands;
+    std::vector<T> cepstra(num_frames * num_coeffs, static_cast<T>(0));
+    constexpr T epsilon = static_cast<T>(1e-8);
+    const T dct_scale = static_cast<T>(M_PI) / static_cast<T>(num_bands);
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* band_ptr = &band_spec[frame * num_bands];
+        T* cep_ptr = &cepstra[frame * num_coeffs];
+
+        for (size_t coeff = 0; coeff < num_coeffs; ++coeff) {
+            T sum = static_cast<T>(0);
+            for (size_t band = 0; band < num_bands; ++band) {
+                const T weighted_log =
+                    std::log(band_ptr[band] * band_weights[band] + epsilon);
+                const T angle =
+                    dct_scale * (static_cast<T>(band) + static_cast<T>(0.5)) * static_cast<T>(coeff);
+                sum += weighted_log * std::cos(angle);
+            }
+            cep_ptr[coeff] = sum / static_cast<T>(num_bands);
+        }
+    }
+
+    return cepstra;
 }
 
 }  // namespace detail
 
 /**
- * Precomputed target features for fast loss computation.
- * Uses fixed hop positions (win_length/4) for deterministic evaluation.
- * STFTs are precomputed since positions are fixed and known ahead of time.
+ * Precomputed target features for the four-part perceptual loss:
+ * - fine exact-frequency spectrogram matching over time
+ * - coarse band-energy spectrogram matching over time
+ * - fine cepstral matching over time
+ * - coarse cepstral matching over time
  */
 template <typename T>
 struct TargetFeaturesFast {
-    // Precomputed target STFTs at each scale [scale][frame * freq]
+    // Fine-grained target STFTs at each scale [scale][frame * freq]
     std::vector<std::vector<T>> stfts;
-
-    // Mean of each STFT [scale]
-    std::vector<T> stft_means;
-
-    // Number of frames for each scale [scale]
-    std::vector<size_t> num_frames;
-
-    // FFT and hop sizes used for each scale
     std::vector<size_t> fft_sizes;
-    std::vector<size_t> hop_sizes;
-
-    // Perceptual frequency weights [scale][freq]
-    std::vector<std::vector<T>> weights;
-
-    // Number of frequency bins for each scale [scale]
     std::vector<size_t> num_freqs;
-
-    // Target signal features
-    T zcr;
-    T target_rms;
-
-    // Fixed positions for each scale (precomputed, deterministic)
+    std::vector<size_t> num_frames;
     std::vector<std::vector<size_t>> positions;
+    std::vector<std::vector<T>> fine_weights;
+    std::vector<std::vector<T>> fine_cepstra;
+    std::vector<std::vector<T>> fine_cepstral_weights;
+    std::vector<size_t> num_fine_cepstra;
+
+    // Coarse-grained band trajectories and cepstra at each scale
+    std::vector<std::vector<T>> band_stfts;
+    std::vector<std::vector<size_t>> band_edges;
+    std::vector<std::vector<T>> band_weights;
+    std::vector<size_t> num_bands;
+    std::vector<std::vector<T>> cepstra;
+    std::vector<std::vector<T>> cepstral_weights;
+    std::vector<size_t> num_cepstra;
 };
 
 /**
@@ -582,61 +655,65 @@ struct TargetFeaturesFast {
  */
 template <typename T>
 inline TargetFeaturesFast<T> precompute_target_features_fast(
-    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {1024, 512, 256}) {
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512}) {
     TargetFeaturesFast<T> features;
     const size_t num_scales = fft_sizes.size();
 
-    // Store FFT sizes and compute hop sizes (win_length / 4)
     features.fft_sizes = fft_sizes;
-    features.hop_sizes.resize(num_scales);
     features.num_freqs.resize(num_scales);
     features.num_frames.resize(num_scales);
     features.stfts.resize(num_scales);
-    features.stft_means.resize(num_scales);
-    features.num_frames.resize(num_scales);
-    features.stfts.resize(num_scales);
-    features.stft_means.resize(num_scales);
-
-    features.weights.resize(num_scales);
     features.positions.resize(num_scales);
+    features.fine_weights.resize(num_scales);
+    features.fine_cepstra.resize(num_scales);
+    features.fine_cepstral_weights.resize(num_scales);
+    features.num_fine_cepstra.resize(num_scales);
+    features.band_stfts.resize(num_scales);
+    features.band_edges.resize(num_scales);
+    features.band_weights.resize(num_scales);
+    features.num_bands.resize(num_scales);
+    features.cepstra.resize(num_scales);
+    features.cepstral_weights.resize(num_scales);
+    features.num_cepstra.resize(num_scales);
 
-    // Compute target RMS from original signal
-    T target_mean = detail::vectorized_mean(target);
-    T target_var = detail::vectorized_variance(target, target_mean);
-    features.target_rms = std::sqrt(target_var);
-
-    // Compute zero-crossing rate
-    features.zcr = detail::zero_crossing_rate_fast(target);
-
-    // Precompute STFTs and features for each scale
     for (size_t scale = 0; scale < num_scales; ++scale) {
         size_t n_fft = fft_sizes[scale];
         size_t win_length = n_fft;
-        size_t hop = win_length / 4;
-        if (hop == 0) hop = 1;
-
-        features.hop_sizes[scale] = hop;
         features.num_freqs[scale] = n_fft / 2 + 1;
+        features.fine_weights[scale] = detail::compute_frequency_weights(
+            features.num_freqs[scale], n_fft, static_cast<T>(constants::TRAINING_SAMPLE_RATE));
 
-        // Compute target STFT with fixed positions
         auto positions = detail::generate_fixed_positions<T>(target.size(), win_length);
         features.positions[scale] = positions;
         features.num_frames[scale] = positions.size();
 
         if (!positions.empty()) {
-            // Compute STFT
+            // Precompute the exact-frequency target spectrogram once, then derive the
+            // fine cepstral and coarse representations from that same spectrogram.
             features.stfts[scale] =
                 detail::stft_with_positions(target, win_length, n_fft, positions);
-
-            // Compute mean of STFT
-            if (!features.stfts[scale].empty()) {
-                features.stft_means[scale] = detail::vectorized_mean(features.stfts[scale]);
-            }
+            features.num_fine_cepstra[scale] = std::min<size_t>(32, features.num_freqs[scale]);
+            features.fine_cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
+                features.fine_weights[scale], features.num_fine_cepstra[scale]);
+            features.fine_cepstra[scale] = detail::weighted_cepstrum_spectrogram(
+                features.stfts[scale], features.num_freqs[scale], features.fine_weights[scale],
+                features.num_fine_cepstra[scale]);
+            const size_t band_count = std::min<size_t>(24, std::max<size_t>(8, n_fft / 64));
+            features.band_edges[scale] =
+                detail::compute_log_band_edges<T>(features.num_freqs[scale], band_count);
+            features.num_bands[scale] = features.band_edges[scale].size() - 1;
+            features.band_stfts[scale] = detail::band_average_spectrogram(
+                features.stfts[scale], features.num_freqs[scale], features.band_edges[scale],
+                features.fine_weights[scale]);
+            features.band_weights[scale] = detail::aggregate_band_weights(
+                features.fine_weights[scale], features.band_edges[scale]);
+            features.num_cepstra[scale] = std::min<size_t>(13, features.num_bands[scale]);
+            features.cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
+                features.band_weights[scale], features.num_cepstra[scale]);
+            features.cepstra[scale] = detail::weighted_cepstrum_spectrogram(
+                features.band_stfts[scale], features.num_bands[scale], features.band_weights[scale],
+                features.num_cepstra[scale]);
         }
-
-        // Precompute perceptual weights for this scale
-        features.weights[scale] = detail::compute_frequency_weights(
-            features.num_freqs[scale], n_fft, static_cast<T>(constants::TRAINING_SAMPLE_RATE));
     }
 
     return features;
@@ -650,68 +727,77 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
 template <typename T>
 inline T compute_audio_loss_fast(const std::vector<T>& generated,
                                  const TargetFeaturesFast<T>& target_features) {
-    T total_loss = 0;
+    T fine_spectral_loss = static_cast<T>(0);
+    T coarse_spectral_loss = static_cast<T>(0);
+    T fine_cepstral_loss = static_cast<T>(0);
+    T coarse_cepstral_loss = static_cast<T>(0);
+    size_t active_scales = 0;
     const size_t num_scales = target_features.fft_sizes.size();
 
     for (size_t scale = 0; scale < num_scales; ++scale) {
         size_t n_fft = target_features.fft_sizes[scale];
         size_t win_length = n_fft;
         size_t num_freqs = target_features.num_freqs[scale];
-        size_t num_frames = target_features.num_frames[scale];
-
-        if (num_frames == 0 || target_features.stfts[scale].empty()) {
+        if (target_features.num_frames[scale] == 0 || target_features.stfts[scale].empty()) {
             continue;
         }
 
-        // Compute generated STFT with the same fixed positions as target
         const auto& positions = target_features.positions[scale];
+        // Compute the generated spectrogram once per scale, then reuse it for both
+        // the fine exact-frequency loss and the coarse band-over-time loss.
         auto x_stft = detail::stft_with_positions(generated, win_length, n_fft, positions);
-
         if (x_stft.size() != target_features.stfts[scale].size()) {
             continue;
         }
 
-        // Get precomputed target STFT and its mean
         const auto& y_stft = target_features.stfts[scale];
-        T y_stft_mean = target_features.stft_means[scale];
+        fine_spectral_loss += detail::log_magnitude_loss(x_stft, y_stft,
+                                                         target_features.fine_weights[scale],
+                                                         num_freqs);
 
-        // Spectral convergence loss (70% weight) with frequency weighting
-        T sc_loss = detail::spectral_convergence_loss(x_stft, y_stft, y_stft_mean,
-                                                      target_features.weights[scale], num_freqs);
+        const auto x_fine_cepstra = detail::weighted_cepstrum_spectrogram(
+            x_stft, num_freqs, target_features.fine_weights[scale],
+            target_features.num_fine_cepstra[scale]);
+        if (!x_fine_cepstra.empty() &&
+            x_fine_cepstra.size() == target_features.fine_cepstra[scale].size()) {
+            fine_cepstral_loss += detail::weighted_l1_loss(
+                x_fine_cepstra, target_features.fine_cepstra[scale],
+                target_features.fine_cepstral_weights[scale],
+                target_features.num_fine_cepstra[scale]);
+        }
 
-        // Log-magnitude loss (30% weight) with frequency weighting
-        T mag_loss =
-            detail::log_magnitude_loss(x_stft, y_stft, target_features.weights[scale], num_freqs);
+        const auto x_band_stft = detail::band_average_spectrogram(
+            x_stft, num_freqs, target_features.band_edges[scale],
+            target_features.fine_weights[scale]);
+        if (!x_band_stft.empty() && x_band_stft.size() == target_features.band_stfts[scale].size()) {
+            coarse_spectral_loss += detail::log_magnitude_loss(
+                x_band_stft, target_features.band_stfts[scale],
+                target_features.band_weights[scale], target_features.num_bands[scale]);
+            const auto x_cepstra = detail::weighted_cepstrum_spectrogram(
+                x_band_stft, target_features.num_bands[scale], target_features.band_weights[scale],
+                target_features.num_cepstra[scale]);
+            if (!x_cepstra.empty() && x_cepstra.size() == target_features.cepstra[scale].size()) {
+                coarse_cepstral_loss += detail::weighted_l1_loss(
+                    x_cepstra, target_features.cepstra[scale],
+                    target_features.cepstral_weights[scale], target_features.num_cepstra[scale]);
+            }
+        }
 
-        // Combine spectral convergence and log-magnitude loss
-        total_loss += static_cast<T>(0.9) * sc_loss + static_cast<T>(0.1) * mag_loss;
+        ++active_scales;
     }
 
-    // Average over scales
-    if (num_scales > 0) {
-        total_loss /= num_scales;
+    if (active_scales == 0) {
+        return static_cast<T>(0);
     }
 
-    // Add zero-crossing rate loss (5% weight)
-    T gen_zcr = detail::zero_crossing_rate_fast(generated);
-    T zcr_loss = std::abs(gen_zcr - target_features.zcr);
-
-    // Add energy/RMS matching term (25% weight) to prevent quiet solutions
-    T gen_mean = detail::vectorized_mean(generated);
-    T gen_var = detail::vectorized_variance(generated, gen_mean);
-    T gen_rms = std::sqrt(gen_var);
-    T energy_loss = static_cast<T>(0);
-    if (target_features.target_rms > static_cast<T>(1e-8)) {
-        T rms_ratio = gen_rms / target_features.target_rms;
-        // Penalize both too quiet and too loud
-        energy_loss = std::abs(static_cast<T>(1.0) - rms_ratio);
-    } else {
-        // If target is silent, penalize any non-zero generated signal
-        energy_loss = gen_rms;
-    }
-
-    return static_cast<T>(0.8) * total_loss + static_cast<T>(0.1) * zcr_loss +
-           static_cast<T>(0.1) * energy_loss;
+    fine_spectral_loss /= static_cast<T>(active_scales);
+    coarse_spectral_loss /= static_cast<T>(active_scales);
+    fine_cepstral_loss /= static_cast<T>(active_scales);
+    coarse_cepstral_loss /= static_cast<T>(active_scales);
+    return static_cast<T>(0.30) * fine_spectral_loss +
+           static_cast<T>(0.20) * coarse_spectral_loss +
+           static_cast<T>(0.30) * fine_cepstral_loss +
+           static_cast<T>(0.20) * coarse_cepstral_loss;
 }
 
 /**
@@ -746,7 +832,7 @@ template <typename T>
 class LossFunction {
    public:
     LossFunction(const std::vector<T>& target,
-                 const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512, 256})
+                 const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512})
         : target_(target), fft_sizes_(fft_sizes) {
         features_ = precompute_target_features_fast(target, fft_sizes);
     }
