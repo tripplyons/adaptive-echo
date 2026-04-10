@@ -1,6 +1,6 @@
 # Adaptive Echo
 
-Adaptive Echo is a JUCE-based audio generator plugin that learns a sampled sound with the existing CMA-ES optimizer and replays it as a tuned one-shot synthesizer.
+Adaptive Echo is a JUCE-based audio generator plugin that learns a sampled sound with a staged coarse-to-fine CR-FM-NES fitting pipeline and replays it as a tuned one-shot synthesizer.
 
 ## Building
 
@@ -23,7 +23,7 @@ The build produces `VST3` and `Standalone` targets. `COPY_PLUGIN_AFTER_BUILD` is
 
 - Load a training sample from disk
 - Choose the reference frequency used to tune the learned sound
-- Train the synthesizer with the existing optimizer logic
+- Train the synthesizer with the staged fitting pipeline
 - Play notes from the JUCE on-screen keyboard or host MIDI
 
 Each note renders as a one-shot voice that ignores note-off and continues until the learned envelopes finish.

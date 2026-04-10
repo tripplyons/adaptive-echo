@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <numeric>
 #include <sstream>
 
 #include "adaptive_echo/constants.hpp"
@@ -16,6 +18,15 @@ namespace {
 constexpr float kMinFrequencyHz = 50.0f;
 constexpr float kMaxFrequencyHz = 2000.0f;
 constexpr float kDefaultReferenceFrequencyHz = 440.0f;
+
+struct TrainingStageConfig {
+    const char* name = "";
+    std::vector<int> indices;
+    std::vector<size_t> fft_sizes;
+    float sigma_scale = 1.0f;
+    float time_fraction = 1.0f;
+    float population_scale = 1.0f;
+};
 
 float sanitize_frequency(float frequency_hz) {
     return std::clamp(frequency_hz, kMinFrequencyHz, kMaxFrequencyHz);
@@ -35,6 +46,38 @@ void normalize_audio(std::vector<float>& audio, float target_peak) {
     for (float& sample : audio) {
         sample *= scale;
     }
+}
+
+std::vector<float> select_settings(const std::vector<float>& settings,
+                                   const std::vector<int>& indices) {
+    std::vector<float> subset;
+    subset.reserve(indices.size());
+    for (int index : indices) {
+        subset.push_back(settings[static_cast<size_t>(index)]);
+    }
+    return subset;
+}
+
+std::vector<float> merge_settings(const std::vector<float>& base, const std::vector<int>& indices,
+                                  const std::vector<float>& updates) {
+    auto merged = base;
+    const size_t count = std::min(indices.size(), updates.size());
+    for (size_t i = 0; i < count; ++i) {
+        merged[static_cast<size_t>(indices[i])] = updates[i];
+    }
+    return merged;
+}
+
+std::vector<int> all_indices() {
+    std::vector<int> indices(constants::NUM_SETTINGS);
+    for (int i = 0; i < constants::NUM_SETTINGS; ++i) {
+        indices[static_cast<size_t>(i)] = i;
+    }
+    return indices;
+}
+
+float clamp_time_fraction(float value) {
+    return std::max(0.0f, value);
 }
 
 }  // namespace
@@ -170,15 +213,108 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
 TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,
                            float initial_sigma, float time_limit, bool verbose,
                            TrainingProgressCallback progress_callback) {
-    LossFunction<float> loss_fn(target_audio);
     const auto time = make_time_axis(constants::NUM_SECONDS, constants::TRAINING_SAMPLE_RATE);
-    auto synth_fn = [](const std::vector<float>& settings, const std::vector<float>& time_axis) {
-        return synth(settings, time_axis, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
+    LossFunction<float> full_loss_fn(target_audio);
+    const std::vector<TrainingStageConfig> stages = {
+        {"coarse",
+         {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 23, 24, 25, 26, 27, 28, 35, 36, 37, 38, 39, 40,
+          41, 42, 43, 44, 45, 46, 48, 50},
+         {2048, 512},
+         0.75f,
+         0.30f,
+         0.75f},
+        {"shape",
+         {10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 29, 30, 31, 32, 33, 34, 47, 49},
+         {4096, 1024, 512},
+         0.40f,
+         0.25f,
+         0.85f},
+        {"refine", all_indices(), {4096, 2048, 1024, 512}, 0.18f, 0.45f, 1.00f},
     };
 
-    return run_crfmnes_optimization<float>(loss_fn, time, synth_fn, population_size,
-                                           initial_sigma, time_limit, 10000, verbose,
-                                           std::move(progress_callback));
+    const float total_fraction = std::accumulate(
+        stages.begin(), stages.end(), 0.0f,
+        [](float sum, const TrainingStageConfig& stage) { return sum + clamp_time_fraction(stage.time_fraction); });
+
+    auto current_settings = default_settings();
+    TrainingResult aggregate_result;
+    aggregate_result.best_settings = current_settings;
+    aggregate_result.best_loss = std::numeric_limits<float>::max();
+
+    float completed_fraction = 0.0f;
+    int total_generations = 0;
+    int total_evals = 0;
+    float final_sigma = initial_sigma;
+
+    for (const auto& stage : stages) {
+        const float normalized_fraction =
+            total_fraction > 0.0f ? stage.time_fraction / total_fraction
+                                  : 1.0f / static_cast<float>(stages.size());
+        const float stage_time_limit =
+            time_limit > 0.0f ? std::max(1.0f, time_limit * normalized_fraction) : 0.0f;
+        int stage_population =
+            std::max(8, static_cast<int>(std::round(population_size * stage.population_scale)));
+        if ((stage_population % 2) != 0) {
+            ++stage_population;
+        }
+
+        LossFunction<float> loss_fn(target_audio, stage.fft_sizes);
+        const auto seed = select_settings(current_settings, stage.indices);
+        auto stage_synth_fn =
+            [base = current_settings, indices = stage.indices](const std::vector<float>& stage_settings,
+                                                               const std::vector<float>& time_axis) {
+                const auto merged = merge_settings(base, indices, stage_settings);
+                return synth(merged, time_axis, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
+            };
+
+        const float stage_sigma = std::max(0.08f, initial_sigma * stage.sigma_scale);
+        CRFMNESOptions<float> stage_options;
+        stage_options.initial_settings = seed;
+
+        auto stage_result = run_crfmnes_optimization<float>(
+            loss_fn, time, stage_synth_fn, stage_population, stage_sigma, stage_time_limit, 10000,
+            verbose,
+            [&, normalized_fraction, completed_fraction](const TrainingProgress& progress) {
+                if (!progress_callback) {
+                    return;
+                }
+                TrainingProgress stage_progress = progress;
+                stage_progress.generation = total_generations + progress.generation;
+                stage_progress.eval_count = total_evals + progress.eval_count;
+                stage_progress.elapsed_seconds =
+                    time_limit > 0.0f
+                        ? std::min(time_limit, (completed_fraction + normalized_fraction *
+                                                                       std::clamp(progress.elapsed_seconds /
+                                                                                      stage_time_limit,
+                                                                                  0.0f, 1.0f)) *
+                                                 time_limit)
+                        : progress.elapsed_seconds;
+                progress_callback(stage_progress);
+            },
+            stage_options);
+
+        current_settings = merge_settings(current_settings, stage.indices, stage_result.best_settings);
+        total_generations += stage_result.iterations_completed;
+        total_evals += stage_result.final_eval_count;
+        final_sigma = stage_result.final_sigma;
+        completed_fraction += normalized_fraction;
+
+        const auto rendered = synth(current_settings, time,
+                                    static_cast<float>(constants::TRAINING_SAMPLE_RATE));
+        const float full_loss = full_loss_fn(rendered);
+        if (full_loss < aggregate_result.best_loss) {
+            aggregate_result.best_loss = full_loss;
+            aggregate_result.best_settings = current_settings;
+        }
+    }
+
+    aggregate_result.iterations_completed = total_generations;
+    aggregate_result.final_eval_count = total_evals;
+    aggregate_result.final_sigma = final_sigma;
+    if (aggregate_result.best_settings.empty()) {
+        aggregate_result.best_settings = current_settings;
+    }
+    return aggregate_result;
 }
 
 std::string serialize_settings(const std::vector<float>& settings) {

@@ -188,10 +188,51 @@ inline void osc_uniform_optimized(const std::vector<T>& time, const std::vector<
                                   const std::vector<T>& noise_level_uniform, std::vector<T>& output,
                                   const std::vector<T>* modulation = nullptr,
                                   const std::vector<T>* fm_amount = nullptr) {
-    if (!freq_uniform.empty()) {
-        osc_optimized(time, freq_uniform[0], phase_shift_uniform[0], warmth_uniform[0],
-                      harshness_uniform[0], amplitude_uniform[0], noise_level_uniform[0], output,
-                      modulation, fm_amount);
+    constexpr T EPSILON = static_cast<T>(1e-6);
+    constexpr T TWO_PI = static_cast<T>(2.0 * M_PI);
+
+    const T min_freq_log = static_cast<T>(12.0 * std::log2(50.0));
+    const T max_freq_log = static_cast<T>(12.0 * std::log2(2000.0));
+    constexpr T min_warmth = static_cast<T>(1.0) / static_cast<T>(5.0);
+    constexpr T max_warmth = static_cast<T>(5.0);
+    constexpr T min_harshness = static_cast<T>(1.0) / static_cast<T>(5.0);
+    constexpr T max_harshness = static_cast<T>(5.0);
+    constexpr T min_amplitude = static_cast<T>(0.1);
+    constexpr T max_amplitude = static_cast<T>(1.0);
+
+    const size_t n = time.size();
+    const float* noise_table = detail::NoiseProvider::instance().table;
+
+    for (size_t i = 0; i < n; ++i) {
+        T semitones = min_freq_log + (max_freq_log - min_freq_log) * freq_uniform[i];
+        T freq = std::pow(static_cast<T>(2.0), semitones / static_cast<T>(12.0));
+        T phase_shift = phase_shift_uniform[i];
+        T warmth = min_warmth * std::pow(max_warmth / min_warmth, warmth_uniform[i]);
+        T harshness =
+            min_harshness * std::pow(max_harshness / min_harshness, harshness_uniform[i]);
+        T amplitude =
+            min_amplitude + (max_amplitude - min_amplitude) * amplitude_uniform[i];
+        T noise_interp = static_cast<T>(0.1) * noise_level_uniform[i];
+
+        T phase = time[i] * freq + phase_shift;
+        if (modulation != nullptr && fm_amount != nullptr) {
+            phase += (*modulation)[i] * (*fm_amount)[i];
+        }
+        phase = phase - std::floor(phase);
+        phase = std::clamp(phase, EPSILON, static_cast<T>(1.0) - EPSILON);
+
+        T phase_pow = detail::fast_pow(static_cast<float>(phase), static_cast<float>(warmth));
+        T one_minus_phase_pow = detail::fast_pow(static_cast<float>(static_cast<T>(1.0) - phase),
+                                                 static_cast<float>(warmth));
+        phase = static_cast<T>(0.5) * (phase_pow - one_minus_phase_pow + static_cast<T>(1.0));
+        phase *= TWO_PI;
+
+        T sin_val = detail::fast_sin(static_cast<float>(phase));
+        T abs_sin = std::clamp(std::abs(sin_val), EPSILON, static_cast<T>(1.0));
+        T sin_pow = detail::fast_pow(static_cast<float>(abs_sin), static_cast<float>(harshness));
+        T wave = (sin_val >= 0 ? 1 : -1) * sin_pow * amplitude;
+        T noise = static_cast<T>(noise_table[i & detail::NoiseProvider::MASK]);
+        output[i] = wave + (noise - wave) * noise_interp;
     }
 }
 
@@ -221,31 +262,30 @@ inline std::vector<T> synth_fast(const std::vector<T>& settings, const std::vect
         scratch.fm_amount[i] = linear_interp(fm_range_low, fm_range_high, scratch.env_fm[i]);
     }
 
-    T env_mod_scalar = (n > 0) ? scratch.env_mod[0] : static_cast<T>(0);
+    for (size_t i = 0; i < n; ++i) {
+        const T mod = scratch.env_mod[i];
+        scratch.osc_b_freq[i] = linear_interp(settings[27], settings[28], mod);
+        scratch.osc_b_phase[i] = linear_interp(settings[29], settings[30], mod);
+        scratch.osc_b_warmth[i] = linear_interp(settings[31], settings[32], mod);
+        scratch.osc_b_harshness[i] = linear_interp(settings[33], settings[34], mod);
+        scratch.osc_b_amp[i] = linear_interp(settings[35], settings[36], mod);
+        scratch.osc_b_noise[i] = linear_interp(settings[37], settings[38], mod);
 
-    // Osc B
-    T osc_b_freq_scalar = linear_interp(settings[27], settings[28], env_mod_scalar);
-    T osc_b_phase_scalar = linear_interp(settings[29], settings[30], env_mod_scalar);
-    T osc_b_warmth_scalar = linear_interp(settings[31], settings[32], env_mod_scalar);
-    T osc_b_harshness_scalar = linear_interp(settings[33], settings[34], env_mod_scalar);
-    T osc_b_amp_scalar = linear_interp(settings[35], settings[36], env_mod_scalar);
-    T osc_b_noise_scalar = linear_interp(settings[37], settings[38], env_mod_scalar);
+        scratch.osc_a_freq[i] = linear_interp(settings[15], settings[16], mod);
+        scratch.osc_a_phase[i] = linear_interp(settings[17], settings[18], mod);
+        scratch.osc_a_warmth[i] = linear_interp(settings[19], settings[20], mod);
+        scratch.osc_a_harshness[i] = linear_interp(settings[21], settings[22], mod);
+        scratch.osc_a_amp[i] = linear_interp(settings[23], settings[24], mod);
+        scratch.osc_a_noise[i] = linear_interp(settings[25], settings[26], mod);
+    }
 
-    osc_optimized(times, osc_b_freq_scalar, osc_b_phase_scalar, osc_b_warmth_scalar,
-                  osc_b_harshness_scalar, osc_b_amp_scalar, osc_b_noise_scalar,
-                  scratch.osc_b_scratch);
+    osc_uniform_optimized(times, scratch.osc_b_freq, scratch.osc_b_phase, scratch.osc_b_warmth,
+                          scratch.osc_b_harshness, scratch.osc_b_amp, scratch.osc_b_noise,
+                          scratch.osc_b_scratch);
 
-    // Osc A
-    T osc_a_freq_scalar = linear_interp(settings[15], settings[16], env_mod_scalar);
-    T osc_a_phase_scalar = linear_interp(settings[17], settings[18], env_mod_scalar);
-    T osc_a_warmth_scalar = linear_interp(settings[19], settings[20], env_mod_scalar);
-    T osc_a_harshness_scalar = linear_interp(settings[21], settings[22], env_mod_scalar);
-    T osc_a_amp_scalar = linear_interp(settings[23], settings[24], env_mod_scalar);
-    T osc_a_noise_scalar = linear_interp(settings[25], settings[26], env_mod_scalar);
-
-    osc_optimized(times, osc_a_freq_scalar, osc_a_phase_scalar, osc_a_warmth_scalar,
-                  osc_a_harshness_scalar, osc_a_amp_scalar, osc_a_noise_scalar,
-                  scratch.osc_a_scratch, &scratch.osc_b_scratch, &scratch.fm_amount);
+    osc_uniform_optimized(times, scratch.osc_a_freq, scratch.osc_a_phase, scratch.osc_a_warmth,
+                          scratch.osc_a_harshness, scratch.osc_a_amp, scratch.osc_a_noise,
+                          scratch.osc_a_scratch, &scratch.osc_b_scratch, &scratch.fm_amount);
 
     std::vector<T> result(n);
     for (size_t i = 0; i < n; ++i) {

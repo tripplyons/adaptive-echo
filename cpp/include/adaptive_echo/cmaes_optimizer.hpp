@@ -26,6 +26,11 @@ namespace adaptive_echo {
 inline constexpr int kDefaultCRFMNESPopulationSize = 32;
 inline constexpr float kDefaultCRFMNESInitialSigma = 2.8f;
 
+template <typename T>
+struct CRFMNESOptions {
+    std::vector<T> initial_settings;
+};
+
 namespace detail {
 
 inline std::mt19937& get_crfmnes_rng() {
@@ -37,6 +42,13 @@ template <typename T>
 inline T sigmoid_to_unit_interval(T x) {
     x = std::clamp(x, static_cast<T>(-500), static_cast<T>(500));
     return static_cast<T>(1) / (static_cast<T>(1) + std::exp(-x));
+}
+
+template <typename T>
+inline T unit_interval_to_logit(T x) {
+    constexpr T epsilon = static_cast<T>(1e-6);
+    x = std::clamp(x, epsilon, static_cast<T>(1) - epsilon);
+    return std::log(x / (static_cast<T>(1) - x));
 }
 
 template <typename T>
@@ -132,7 +144,7 @@ inline std::vector<T> evaluate_population(
     LossFn& loss_fn, SynthFn synth_fn, const std::vector<T>& time,
     const std::vector<std::vector<T>>& population_logits) {
     const size_t lambda = population_logits.size();
-    const size_t num_settings = static_cast<size_t>(adaptive_echo::constants::NUM_SETTINGS);
+    const size_t num_settings = lambda > 0 ? population_logits.front().size() : 0;
 
     std::vector<std::vector<T>> generated(lambda);
     for (size_t i = 0; i < lambda; ++i) {
@@ -180,8 +192,11 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
     T initial_sigma = static_cast<T>(kDefaultCRFMNESInitialSigma),
     T time_limit = static_cast<T>(30),
     int max_iterations = 10000, bool verbose = true,
-    std::function<void(const CRFMNESProgress<T>&)> progress_callback = {}) {
-    const int dim = adaptive_echo::constants::NUM_SETTINGS;
+    std::function<void(const CRFMNESProgress<T>&)> progress_callback = {},
+    const CRFMNESOptions<T>& options = {}) {
+    const int dim = !options.initial_settings.empty()
+                        ? static_cast<int>(options.initial_settings.size())
+                        : adaptive_echo::constants::NUM_SETTINGS;
     auto t_start = std::chrono::steady_clock::now();
     auto& rng = detail::get_crfmnes_rng();
 
@@ -196,6 +211,11 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
     initial_sigma = std::max(initial_sigma, static_cast<T>(1e-6));
 
     std::vector<T> mean(dim, static_cast<T>(0));
+    if (!options.initial_settings.empty()) {
+        for (int i = 0; i < dim; ++i) {
+            mean[i] = detail::unit_interval_to_logit(options.initial_settings[static_cast<size_t>(i)]);
+        }
+    }
     std::vector<T> diag_d(dim, static_cast<T>(1));
     std::vector<T> pc(dim, static_cast<T>(0));
     std::vector<T> ps(dim, static_cast<T>(0));
