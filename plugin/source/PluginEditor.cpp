@@ -12,7 +12,8 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
       keyboardComponent(audioProcessor.getKeyboardState(),
                         juce::MidiKeyboardComponent::horizontalKeyboard) {
     setOpaque(true);
-    setSize(1080, 580);
+    setSize(1080, 660);
+    setWantsKeyboardFocus(true);
 
     loadSampleButton.addListener(this);
     trainButton.addListener(this);
@@ -66,6 +67,14 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     configureEffectSlider(lowPassSlopeSlider, lowPassSlopeLabel, "Low-Pass Slope");
     configureEffectSlider(distortionSlider, distortionLabel, "Distortion");
 
+    keyboardLabel.setText("MIDI Keyboard", juce::dontSendNotification);
+    keyboardLabel.setColour(juce::Label::textColourId, kPrimaryText);
+    addAndMakeVisible(keyboardLabel);
+
+    keyboardComponent.setAvailableRange(24, 96);
+    keyboardComponent.setLowestVisibleKey(48);
+    keyboardComponent.setKeyWidth(22.0f);
+    keyboardComponent.setWantsKeyboardFocus(true);
     addAndMakeVisible(keyboardComponent);
 
     frequencyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -119,6 +128,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     audioProcessor.addChangeListener(this);
     startTimerHz(10);
     refreshFromProcessor();
+    keyboardComponent.grabKeyboardFocus();
 }
 
 AdaptiveEchoAudioProcessorEditor::~AdaptiveEchoAudioProcessorEditor() {
@@ -204,8 +214,10 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
                {&lowPassSlopeLabel, &lowPassSlopeSlider},
                {&distortionLabel, &distortionSlider}});
 
-    bounds.removeFromTop(12);
-    keyboardComponent.setBounds(bounds.removeFromBottom(120));
+    bounds.removeFromTop(16);
+    keyboardLabel.setBounds(bounds.removeFromTop(24));
+    bounds.removeFromTop(8);
+    keyboardComponent.setBounds(bounds.removeFromBottom(150));
 }
 
 void AdaptiveEchoAudioProcessorEditor::buttonClicked(juce::Button* button) {

@@ -34,6 +34,7 @@ private:
     juce::Label lowPassCutoffLabel;
     juce::Label lowPassSlopeLabel;
     juce::Label distortionLabel;
+    juce::Label keyboardLabel;
     double trainingProgressValue = 0.0;
     juce::ProgressBar trainingProgressBar { trainingProgressValue };
     juce::Slider referenceFrequencySlider;
