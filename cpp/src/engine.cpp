@@ -919,65 +919,34 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
         return synth(settings, local_time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
     };
 
-    TrainingResult aggregate_result;
-    aggregate_result.best_settings = coarse_result.settings;
-    aggregate_result.best_loss = coarse_result.full_loss;
-    aggregate_result.iterations_completed = coarse_result.iterations_completed;
-    aggregate_result.final_eval_count = coarse_result.eval_count;
-    aggregate_result.final_sigma = effective_sigma;
+    CRFMNESOptions<float> options;
+    options.initial_settings = coarse_result.settings;
 
-    auto current_settings = coarse_result.settings;
-    const std::array<float, 3> stage_budgets =
-        time_limit > 0.0f
-            ? std::array<float, 3> {
-                  std::max(0.0f, time_limit * 0.50f - coarse_elapsed),
-                  std::max(0.0f, time_limit * 0.75f - std::max(coarse_elapsed, time_limit * 0.50f)),
-                  std::max(0.0f, time_limit - std::max(coarse_elapsed, time_limit * 0.75f)),
-              }
-            : std::array<float, 3> {
-                  remaining_time / 3.0f,
-                  remaining_time / 3.0f,
-                  remaining_time / 3.0f,
-              };
+    auto nes_progress = [&](const CRFMNESProgress<float>& progress) {
+        report_progress(progress_callback, coarse_result.iterations_completed,
+                        coarse_result.eval_count, coarse_elapsed, time_limit,
+                        std::min(coarse_result.full_loss, progress.best_loss), progress);
+    };
 
-    for (float stage_time_limit : stage_budgets) {
-        const float elapsed_before_stage = elapsed_seconds_since(global_start);
-        if (stage_time_limit <= 0.05f) {
-            continue;
-        }
+    auto result =
+        run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, effective_population,
+                                        effective_sigma, remaining_time, 10000, verbose,
+                                        nes_progress, options);
 
-        CRFMNESOptions<float> options;
-        options.initial_settings = current_settings;
-
-        const int generation_offset = aggregate_result.iterations_completed;
-        const int eval_offset = aggregate_result.final_eval_count;
-        const float elapsed_offset = elapsed_before_stage;
-        const float best_loss_so_far = aggregate_result.best_loss;
-
-        auto nes_progress = [&](const CRFMNESProgress<float>& progress) {
-            report_progress(progress_callback, generation_offset, eval_offset, elapsed_offset,
-                            time_limit, std::min(best_loss_so_far, progress.best_loss), progress);
-        };
-
-        auto stage_result =
-            run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, effective_population,
-                                            effective_sigma, stage_time_limit, 10000, verbose,
-                                            nes_progress, options);
-
-        aggregate_result.iterations_completed += stage_result.iterations_completed;
-        aggregate_result.final_eval_count += stage_result.final_eval_count;
-        aggregate_result.final_sigma = stage_result.final_sigma;
-
-        if (!stage_result.best_settings.empty()) {
-            current_settings = stage_result.best_settings;
-        }
-        if (!stage_result.best_settings.empty() && stage_result.best_loss < aggregate_result.best_loss) {
-            aggregate_result.best_settings = stage_result.best_settings;
-            aggregate_result.best_loss = stage_result.best_loss;
-        }
+    if (result.best_settings.empty()) {
+        result.best_settings = coarse_result.settings;
+        result.best_loss = coarse_result.full_loss;
     }
 
-    return aggregate_result;
+    if (coarse_result.full_loss < result.best_loss) {
+        result.best_settings = coarse_result.settings;
+        result.best_loss = coarse_result.full_loss;
+    }
+
+    result.iterations_completed += coarse_result.iterations_completed;
+    result.final_eval_count += coarse_result.eval_count;
+
+    return result;
 }
 
 TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,

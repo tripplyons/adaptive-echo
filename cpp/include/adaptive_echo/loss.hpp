@@ -471,6 +471,40 @@ inline T l1_loss(const std::vector<T>& x, const std::vector<T>& y) {
 }
 
 template <typename T>
+inline T centered_cosine_distance(const std::vector<T>& x, const std::vector<T>& y) {
+    const size_t n = std::min(x.size(), y.size());
+    if (n == 0) {
+        return static_cast<T>(0);
+    }
+
+    const T x_mean =
+        std::accumulate(x.begin(), x.begin() + static_cast<std::ptrdiff_t>(n), static_cast<T>(0)) /
+        static_cast<T>(n);
+    const T y_mean =
+        std::accumulate(y.begin(), y.begin() + static_cast<std::ptrdiff_t>(n), static_cast<T>(0)) /
+        static_cast<T>(n);
+
+    T dot = static_cast<T>(0);
+    T x_norm = static_cast<T>(0);
+    T y_norm = static_cast<T>(0);
+#if defined(HAS_OPENMP)
+#pragma omp simd reduction(+ : dot, x_norm, y_norm)
+#endif
+    for (size_t i = 0; i < n; ++i) {
+        const T x_centered = x[i] - x_mean;
+        const T y_centered = y[i] - y_mean;
+        dot += x_centered * y_centered;
+        x_norm += x_centered * x_centered;
+        y_norm += y_centered * y_centered;
+    }
+
+    const T denom =
+        std::sqrt(std::max(x_norm, static_cast<T>(1e-8)) * std::max(y_norm, static_cast<T>(1e-8)));
+    const T cosine = dot / denom;
+    return static_cast<T>(1) - std::clamp(cosine, static_cast<T>(-1), static_cast<T>(1));
+}
+
+template <typename T>
 inline std::vector<T> normalize_shape(std::vector<T> values) {
     if (values.empty()) {
         return values;
@@ -941,6 +975,10 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     T zcr_delta_loss = static_cast<T>(0);
     T centroid_loss = static_cast<T>(0);
     T flux_loss = static_cast<T>(0);
+    T envelope_corr_loss = static_cast<T>(0);
+    T zcr_corr_loss = static_cast<T>(0);
+    T centroid_corr_loss = static_cast<T>(0);
+    T flux_corr_loss = static_cast<T>(0);
     size_t active_scales = 0;
     const size_t num_scales = target_features.fft_sizes.size();
 
@@ -989,12 +1027,16 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
                 x_band_centroids.size() == target_features.band_centroids[scale].size()) {
                 centroid_loss +=
                     detail::l1_loss(x_band_centroids, target_features.band_centroids[scale]);
+                centroid_corr_loss += detail::centered_cosine_distance(
+                    x_band_centroids, target_features.band_centroids[scale]);
             }
             const auto x_band_flux = detail::compute_spectral_flux_trajectory(
                 x_band_stft, target_features.num_bands[scale]);
             if (!x_band_flux.empty() &&
                 x_band_flux.size() == target_features.band_flux[scale].size()) {
                 flux_loss += detail::l1_loss(x_band_flux, target_features.band_flux[scale]);
+                flux_corr_loss +=
+                    detail::centered_cosine_distance(x_band_flux, target_features.band_flux[scale]);
             }
             const auto x_cepstra = detail::weighted_cepstrum_spectrogram(
                 x_band_stft, target_features.num_bands[scale], target_features.band_weights[scale],
@@ -1019,16 +1061,21 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     coarse_cepstral_loss /= static_cast<T>(active_scales);
     centroid_loss /= static_cast<T>(active_scales);
     flux_loss /= static_cast<T>(active_scales);
+    centroid_corr_loss /= static_cast<T>(active_scales);
+    flux_corr_loss /= static_cast<T>(active_scales);
 
     if (!target_features.envelope.empty()) {
         const auto generated_envelope = detail::compute_envelope(generated);
         envelope_loss = detail::l1_loss(generated_envelope, target_features.envelope);
+        envelope_corr_loss =
+            detail::centered_cosine_distance(generated_envelope, target_features.envelope);
         envelope_delta_loss = detail::l1_loss(detail::compute_delta(generated_envelope),
                                               target_features.envelope_delta);
     }
     if (!target_features.zcr.empty()) {
         const auto generated_zcr = detail::compute_windowed_zcr(generated);
         zcr_loss = detail::l1_loss(generated_zcr, target_features.zcr);
+        zcr_corr_loss = detail::centered_cosine_distance(generated_zcr, target_features.zcr);
         zcr_delta_loss = detail::l1_loss(detail::compute_delta(generated_zcr),
                                          target_features.zcr_delta);
     }
@@ -1037,12 +1084,16 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
                             static_cast<T>(0.18) * coarse_spectral_loss +
                             static_cast<T>(0.18) * fine_cepstral_loss +
                             static_cast<T>(0.08) * coarse_cepstral_loss;
-    const T shape_loss = static_cast<T>(0.05) * envelope_loss +
-                         static_cast<T>(0.02) * envelope_delta_loss +
-                         static_cast<T>(0.02) * zcr_loss +
-                         static_cast<T>(0.01) * zcr_delta_loss +
-                         static_cast<T>(0.05) * centroid_loss +
-                         static_cast<T>(0.05) * flux_loss;
+    const T shape_loss = static_cast<T>(0.015) * envelope_loss +
+                         static_cast<T>(0.03) * envelope_corr_loss +
+                         static_cast<T>(0.01) * envelope_delta_loss +
+                         static_cast<T>(0.008) * zcr_loss +
+                         static_cast<T>(0.018) * zcr_corr_loss +
+                         static_cast<T>(0.008) * zcr_delta_loss +
+                         static_cast<T>(0.015) * centroid_loss +
+                         static_cast<T>(0.03) * centroid_corr_loss +
+                         static_cast<T>(0.015) * flux_loss +
+                         static_cast<T>(0.03) * flux_corr_loss;
     return spectral_loss + shape_loss;
 }
 

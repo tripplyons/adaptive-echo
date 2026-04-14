@@ -65,8 +65,8 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     addAndMakeVisible(statusLabel);
 
     trainingProgressLabel.setJustificationType(juce::Justification::centredLeft);
-    trainingProgressLabel.setColour(juce::Label::textColourId, kSecondaryText);
-    trainingProgressLabel.setFont(juce::FontOptions(13.0f));
+    trainingProgressLabel.setColour(juce::Label::textColourId, kPrimaryText);
+    trainingProgressLabel.setFont(juce::FontOptions(14.0f, juce::Font::bold));
     addAndMakeVisible(trainingProgressLabel);
 
     trainingProgressBar.setTextToDisplay({});
@@ -183,9 +183,9 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
 
     auto bounds = getLocalBounds().reduced(22);
     auto hero = bounds.removeFromTop(72);
-    auto trainingArea = bounds.removeFromTop(162);
+    auto trainingArea = bounds.removeFromTop(236);
     bounds.removeFromTop(16);
-    auto controlsArea = bounds.removeFromTop(308);
+    auto controlsArea = bounds.removeFromTop(250);
     bounds.removeFromTop(16);
     auto keyboardArea = bounds;
 
@@ -202,13 +202,8 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setFont(juce::Font(juce::FontOptions(34.0f, juce::Font::bold)));
     g.drawText("Adaptive Echo", hero.removeFromTop(40), juce::Justification::centredLeft, false);
 
-    g.setFont(15.0f);
-    g.setColour(kSecondaryText);
-    g.drawText("White canvas, clearer grouping, and a larger keyboard for faster auditioning.",
-               hero, juce::Justification::centredLeft, false);
-
     drawPanelHeader(g, trainingArea.reduced(22).removeFromTop(42), "Training",
-                    "Load a sample, fit the synth, and monitor progress without hunting for controls.");
+                    "Load a sample, fit the synth, and keep the current loss and progress visible.");
     drawPanelHeader(g, leftControls.reduced(22).removeFromTop(42), "Source Controls",
                     "Reference pitch and pre-filter shaping.");
     drawPanelHeader(g, rightControls.reduced(22).removeFromTop(42), "Output Controls",
@@ -221,15 +216,17 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     auto bounds = getLocalBounds().reduced(22);
     bounds.removeFromTop(72);
 
-    auto trainingArea = bounds.removeFromTop(162).reduced(22);
+    auto trainingArea = bounds.removeFromTop(236).reduced(22);
     bounds.removeFromTop(16);
-    auto controlsArea = bounds.removeFromTop(308);
+    auto controlsArea = bounds.removeFromTop(250);
     bounds.removeFromTop(16);
     auto keyboardArea = bounds.reduced(22);
 
     auto leftControls = controlsArea.removeFromLeft((controlsArea.getWidth() - 16) / 2).reduced(22);
     controlsArea.removeFromLeft(16);
     auto rightControls = controlsArea.reduced(22);
+
+    trainingArea.removeFromTop(54);
 
     auto actionRow = trainingArea.removeFromTop(40);
     auto actionButtons = actionRow.removeFromRight(310);
@@ -244,7 +241,7 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     trainingArea.removeFromTop(8);
     trainingProgressLabel.setBounds(trainingArea.removeFromTop(22));
     trainingArea.removeFromTop(10);
-    trainingProgressBar.setBounds(trainingArea.removeFromTop(20));
+    trainingProgressBar.setBounds(trainingArea.removeFromTop(28));
     trainingArea.removeFromTop(14);
     auto toggleRow = trainingArea.removeFromTop(28);
     oscAPitchTrackToggle.setBounds(toggleRow.removeFromLeft(190));
