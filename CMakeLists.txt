@@ -117,3 +117,19 @@ target_link_libraries(AdaptiveEcho
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+add_executable(compare_optimizers
+    cpp/compare_optimizers.cpp
+)
+
+target_link_libraries(compare_optimizers
+    PRIVATE
+        adaptive_echo_engine
+        juce::juce_audio_formats
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)

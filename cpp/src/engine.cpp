@@ -1,9 +1,11 @@
 #include "adaptive_echo/engine.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <sstream>
 
 #include "adaptive_echo/constants.hpp"
@@ -18,18 +20,179 @@ namespace {
 constexpr float kMinFrequencyHz = 50.0f;
 constexpr float kMaxFrequencyHz = 2000.0f;
 constexpr float kDefaultReferenceFrequencyHz = 440.0f;
+constexpr float kMinEnvelopeLengthSeconds = 0.2f;
+constexpr float kMaxEnvelopeLengthSeconds =
+    static_cast<float>(constants::NUM_SECONDS);
+constexpr float kMinEnvelopeAttackSeconds = 0.05f;
+constexpr float kMaxEnvelopeAttackSeconds = 0.5f;
+constexpr float kMinEnvelopeDecaySeconds = 0.05f;
+constexpr float kMaxEnvelopeDecaySeconds = 0.5f;
+constexpr float kMinEnvelopeReleaseSeconds = 0.05f;
+constexpr float kMaxEnvelopeReleaseSeconds = 0.5f;
+constexpr float kMinFilterCutoffHz = 20.0f;
+constexpr float kMaxFilterCutoffHz = 20000.0f;
+
+struct TargetAudioSummary {
+    float dominant_frequency_hz = 440.0f;
+    float spectral_centroid_hz = 1000.0f;
+    float spectral_rolloff_hz = 9000.0f;
+    float spectral_flatness = 0.1f;
+    float rms = 0.15f;
+    float crest_factor = 4.0f;
+    float active_duration_seconds = 0.6f;
+    float attack_seconds = 0.05f;
+    float decay_seconds = 0.18f;
+    float sustain_level = 0.4f;
+    float release_seconds = 0.12f;
+};
+
+struct CandidateResult {
+    std::vector<float> settings;
+    float full_loss = std::numeric_limits<float>::max();
+};
+
+struct TPEHyperparameters {
+    float gamma = 0.2633971f;
+    int latent_divisor = 4;
+    int max_latent_dim = 9;
+    int min_latent_dim = 4;
+    int min_init_samples = 8;
+    int init_samples_multiplier = 3;
+    int candidate_count = 630;
+    float local_noise_std = 0.0664878f;
+    float coarse_radius = 0.2591669f;
+    float shape_radius = 0.1033653f;
+    float refine_radius = 0.1317812f;
+};
 
 struct TrainingStageConfig {
     const char* name = "";
     std::vector<int> indices;
-    std::vector<size_t> fft_sizes;
-    float sigma_scale = 1.0f;
     float time_fraction = 1.0f;
-    float population_scale = 1.0f;
+    float radius = 0.25f;
+};
+
+class TPEModel {
+   public:
+    explicit TPEModel(float gamma) : gamma_(gamma) {}
+
+    bool fit(const std::vector<std::vector<float>>& inputs, const std::vector<float>& values) {
+        if (inputs.empty() || inputs.size() != values.size()) {
+            return false;
+        }
+
+        const size_t dim = inputs.front().size();
+        const size_t n = values.size();
+        const size_t good_count =
+            std::clamp(static_cast<size_t>(std::ceil(gamma_ * static_cast<float>(n))),
+                       static_cast<size_t>(1), n);
+
+        std::vector<size_t> order(n);
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(),
+                  [&](size_t lhs, size_t rhs) { return values[lhs] < values[rhs]; });
+
+        good_means_.assign(dim, 0.0f);
+        good_stds_.assign(dim, 0.28f);
+        bad_means_.assign(dim, 0.0f);
+        bad_stds_.assign(dim, 0.55f);
+
+        for (size_t d = 0; d < dim; ++d) {
+            float good_mean = 0.0f;
+            float bad_mean = 0.0f;
+            for (size_t i = 0; i < good_count; ++i) {
+                good_mean += inputs[order[i]][d];
+            }
+            for (size_t i = good_count; i < n; ++i) {
+                bad_mean += inputs[order[i]][d];
+            }
+            good_mean /= static_cast<float>(good_count);
+            bad_mean /= static_cast<float>(std::max<size_t>(1, n - good_count));
+
+            float good_var = 0.0f;
+            float bad_var = 0.0f;
+            for (size_t i = 0; i < good_count; ++i) {
+                const float diff = inputs[order[i]][d] - good_mean;
+                good_var += diff * diff;
+            }
+            for (size_t i = good_count; i < n; ++i) {
+                const float diff = inputs[order[i]][d] - bad_mean;
+                bad_var += diff * diff;
+            }
+
+            good_means_[d] = good_mean;
+            bad_means_[d] = bad_mean;
+            good_stds_[d] =
+                std::clamp(std::sqrt(good_var / static_cast<float>(good_count) + 1e-4f), 0.06f,
+                           0.45f);
+            bad_stds_[d] = std::clamp(
+                std::sqrt(bad_var / static_cast<float>(std::max<size_t>(1, n - good_count)) +
+                          1e-4f),
+                0.10f, 0.75f);
+        }
+
+        best_point_ = inputs[order.front()];
+        return true;
+    }
+
+    std::vector<float> sample_candidate(std::mt19937& rng) const {
+        std::vector<float> candidate(best_point_.size(), 0.0f);
+        for (size_t d = 0; d < candidate.size(); ++d) {
+            std::normal_distribution<float> distribution(good_means_[d], good_stds_[d]);
+            candidate[d] = std::clamp(distribution(rng), -1.0f, 1.0f);
+        }
+        return candidate;
+    }
+
+    float score_candidate(const std::vector<float>& candidate) const {
+        float good_log_density = 0.0f;
+        float bad_log_density = 0.0f;
+        for (size_t d = 0; d < candidate.size(); ++d) {
+            good_log_density += gaussian_log_pdf(candidate[d], good_means_[d], good_stds_[d]);
+            bad_log_density += gaussian_log_pdf(candidate[d], bad_means_[d], bad_stds_[d]);
+        }
+        return good_log_density - bad_log_density;
+    }
+
+   private:
+    static float gaussian_log_pdf(float x, float mean, float stddev) {
+        const float safe_stddev = std::max(stddev, 1e-4f);
+        const float z = (x - mean) / safe_stddev;
+        return -std::log(safe_stddev) - 0.5f * z * z -
+               0.5f * std::log(2.0f * static_cast<float>(M_PI));
+    }
+
+    float gamma_ = 0.20f;
+    std::vector<float> good_means_;
+    std::vector<float> good_stds_;
+    std::vector<float> bad_means_;
+    std::vector<float> bad_stds_;
+    std::vector<float> best_point_;
 };
 
 float sanitize_frequency(float frequency_hz) {
     return std::clamp(frequency_hz, kMinFrequencyHz, kMaxFrequencyHz);
+}
+
+float clamp01(float value) {
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
+float inverse_linear(float minimum, float maximum, float value) {
+    const float span = std::max(maximum - minimum, 1e-6f);
+    return clamp01((value - minimum) / span);
+}
+
+float inverse_exp_interp(float minimum, float maximum, float value) {
+    value = std::clamp(value, minimum, maximum);
+    const float safe_minimum = std::max(minimum, 1e-6f);
+    const float safe_maximum = std::max(maximum, safe_minimum + 1e-6f);
+    return clamp01(std::log(value / safe_minimum) / std::log(safe_maximum / safe_minimum));
+}
+
+float hz_to_filter_normalized(float cutoff_hz) {
+    cutoff_hz = std::clamp(cutoff_hz, kMinFilterCutoffHz, kMaxFilterCutoffHz);
+    return clamp01(std::log(cutoff_hz / kMinFilterCutoffHz) / std::log(1000.0f));
 }
 
 void normalize_audio(std::vector<float>& audio, float target_peak) {
@@ -46,6 +209,345 @@ void normalize_audio(std::vector<float>& audio, float target_peak) {
     for (float& sample : audio) {
         sample *= scale;
     }
+}
+
+float evaluate_settings(const std::vector<float>& settings,
+                        const std::vector<float>& time,
+                        const LossFunction<float>& loss_fn) {
+    return loss_fn(synth(settings, time, static_cast<float>(constants::TRAINING_SAMPLE_RATE)));
+}
+
+std::vector<float> evaluate_settings_batch(const std::vector<std::vector<float>>& settings_batch,
+                                           const std::vector<float>& time,
+                                           const LossFunction<float>& loss_fn) {
+    std::vector<std::vector<float>> rendered_batch(settings_batch.size());
+
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (size_t i = 0; i < settings_batch.size(); ++i) {
+        rendered_batch[i] =
+            synth(settings_batch[i], time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
+    }
+
+    return loss_fn.compute_batch(rendered_batch);
+}
+
+TargetAudioSummary summarize_target_audio(
+    const std::vector<float>& target_audio,
+    const TargetFeaturesFast<float>& features) {
+    TargetAudioSummary summary;
+
+    if (!features.stfts.empty() && !features.stfts.front().empty() &&
+        !features.num_freqs.empty() && !features.fft_sizes.empty()) {
+        const size_t scale = 0;
+        const size_t num_freqs = features.num_freqs[scale];
+        const size_t num_frames = features.num_frames[scale];
+        const float sample_rate = static_cast<float>(constants::TRAINING_SAMPLE_RATE);
+        const float n_fft = static_cast<float>(features.fft_sizes[scale]);
+        std::vector<float> mean_spectrum(num_freqs, 0.0f);
+        for (size_t frame = 0; frame < num_frames; ++frame) {
+            const size_t offset = frame * num_freqs;
+            for (size_t bin = 0; bin < num_freqs; ++bin) {
+                mean_spectrum[bin] += features.stfts[scale][offset + bin];
+            }
+        }
+        if (num_frames > 0) {
+            const float inv_frames = 1.0f / static_cast<float>(num_frames);
+            for (float& value : mean_spectrum) {
+                value *= inv_frames;
+            }
+        }
+
+        float weighted_sum = 0.0f;
+        float magnitude_sum = 0.0f;
+        float log_sum = 0.0f;
+        float max_magnitude = 0.0f;
+        size_t max_index = 0;
+        for (size_t bin = 1; bin < num_freqs; ++bin) {
+            const float frequency = static_cast<float>(bin) * sample_rate / n_fft;
+            const float magnitude = std::max(mean_spectrum[bin], 1e-8f);
+            weighted_sum += frequency * magnitude;
+            magnitude_sum += magnitude;
+            log_sum += std::log(magnitude);
+            if (frequency >= kMinFrequencyHz && frequency <= kMaxFrequencyHz &&
+                magnitude > max_magnitude) {
+                max_magnitude = magnitude;
+                max_index = bin;
+            }
+        }
+
+        if (magnitude_sum > 0.0f) {
+            summary.spectral_centroid_hz = weighted_sum / magnitude_sum;
+            const float geometric_mean =
+                std::exp(log_sum / std::max(1.0f, static_cast<float>(num_freqs - 1)));
+            summary.spectral_flatness = clamp01(
+                geometric_mean * static_cast<float>(num_freqs - 1) / magnitude_sum);
+
+            float cumulative = 0.0f;
+            for (size_t bin = 1; bin < num_freqs; ++bin) {
+                cumulative += mean_spectrum[bin];
+                if (cumulative >= 0.90f * magnitude_sum) {
+                    summary.spectral_rolloff_hz =
+                        static_cast<float>(bin) * sample_rate / n_fft;
+                    break;
+                }
+            }
+        }
+
+        if (max_index > 0) {
+            summary.dominant_frequency_hz =
+                static_cast<float>(max_index) * sample_rate / n_fft;
+        }
+    }
+
+    if (!target_audio.empty()) {
+        const size_t window = 256;
+        const size_t num_blocks = (target_audio.size() + window - 1) / window;
+        std::vector<float> envelope(num_blocks, 0.0f);
+        float peak = 0.0f;
+        double sum_squares = 0.0;
+        for (size_t i = 0; i < target_audio.size(); ++i) {
+            const float sample = std::abs(target_audio[i]);
+            envelope[i / window] += sample;
+            peak = std::max(peak, sample);
+            sum_squares += static_cast<double>(target_audio[i]) * target_audio[i];
+        }
+        for (float& value : envelope) {
+            value /= static_cast<float>(window);
+        }
+
+        summary.rms = std::sqrt(static_cast<float>(
+            sum_squares / std::max<size_t>(1, target_audio.size())));
+        summary.crest_factor = peak / std::max(summary.rms, 1e-6f);
+
+        const auto peak_it = std::max_element(envelope.begin(), envelope.end());
+        const float envelope_peak = peak_it != envelope.end() ? *peak_it : 0.0f;
+        const float threshold = std::max(1e-4f, envelope_peak * 0.1f);
+        size_t first_active = 0;
+        size_t last_active = envelope.empty() ? 0 : envelope.size() - 1;
+        while (first_active < envelope.size() && envelope[first_active] < threshold) {
+            ++first_active;
+        }
+        while (last_active > first_active && envelope[last_active] < threshold) {
+            --last_active;
+        }
+
+        if (first_active < envelope.size() && last_active >= first_active) {
+            const float seconds_per_block =
+                static_cast<float>(window) / static_cast<float>(constants::TRAINING_SAMPLE_RATE);
+            const size_t peak_index = peak_it != envelope.end()
+                                          ? static_cast<size_t>(std::distance(envelope.begin(), peak_it))
+                                          : first_active;
+            summary.active_duration_seconds = std::clamp(
+                static_cast<float>(last_active - first_active + 1) * seconds_per_block,
+                kMinEnvelopeLengthSeconds, kMaxEnvelopeLengthSeconds);
+            summary.attack_seconds = std::clamp(
+                static_cast<float>(std::max<size_t>(
+                    1, peak_index > first_active ? peak_index - first_active : 1)) *
+                    seconds_per_block,
+                kMinEnvelopeAttackSeconds, kMaxEnvelopeAttackSeconds);
+            summary.decay_seconds = std::clamp(summary.active_duration_seconds * 0.25f,
+                                               kMinEnvelopeDecaySeconds,
+                                               kMaxEnvelopeDecaySeconds);
+            summary.release_seconds = std::clamp(summary.active_duration_seconds * 0.18f,
+                                                 kMinEnvelopeReleaseSeconds,
+                                                 kMaxEnvelopeReleaseSeconds);
+
+            const size_t tail_span =
+                std::max<size_t>(1, (last_active - first_active + 1) / 5);
+            float tail_mean = 0.0f;
+            for (size_t i = last_active + 1 - tail_span; i <= last_active; ++i) {
+                tail_mean += envelope[i];
+            }
+            tail_mean /= static_cast<float>(tail_span);
+            summary.sustain_level = clamp01(
+                envelope_peak > 0.0f ? tail_mean / envelope_peak : 0.0f);
+        }
+    }
+
+    summary.dominant_frequency_hz = sanitize_frequency(summary.dominant_frequency_hz);
+    summary.spectral_centroid_hz =
+        std::clamp(summary.spectral_centroid_hz, kMinFrequencyHz, kMaxFilterCutoffHz);
+    summary.spectral_rolloff_hz =
+        std::clamp(summary.spectral_rolloff_hz, kMinFrequencyHz, kMaxFilterCutoffHz);
+    return summary;
+}
+
+std::vector<float> make_seed_from_summary(const TargetAudioSummary& summary) {
+    auto seed = default_settings();
+
+    const float frequency_norm = hz_to_normalized_frequency(summary.dominant_frequency_hz);
+    const float brightness = clamp01(
+        summary.spectral_centroid_hz /
+        std::max(summary.dominant_frequency_hz * 4.0f, 1.0f));
+    const float noisiness = clamp01(summary.spectral_flatness * 1.8f);
+    const float modulation_ratio = clamp01(
+        summary.spectral_centroid_hz /
+            std::max(summary.dominant_frequency_hz * 2.0f, 1.0f) -
+        0.35f);
+
+    const float vol_length = inverse_exp_interp(
+        kMinEnvelopeLengthSeconds, kMaxEnvelopeLengthSeconds,
+        summary.active_duration_seconds);
+    const float attack = inverse_exp_interp(
+        kMinEnvelopeAttackSeconds, kMaxEnvelopeAttackSeconds,
+        summary.attack_seconds);
+    const float decay = inverse_exp_interp(
+        kMinEnvelopeDecaySeconds, kMaxEnvelopeDecaySeconds,
+        summary.decay_seconds);
+    const float sustain = inverse_linear(0.1f, 1.0f, summary.sustain_level);
+    const float release = inverse_exp_interp(
+        kMinEnvelopeReleaseSeconds, kMaxEnvelopeReleaseSeconds,
+        summary.release_seconds);
+
+    for (int offset : {0, 5}) {
+        seed[static_cast<size_t>(offset + 0)] = vol_length;
+        seed[static_cast<size_t>(offset + 1)] = attack;
+        seed[static_cast<size_t>(offset + 2)] = decay;
+        seed[static_cast<size_t>(offset + 3)] = sustain;
+        seed[static_cast<size_t>(offset + 4)] = release;
+    }
+
+    seed[10] = clamp01(vol_length * 0.9f);
+    seed[11] = clamp01(attack * 0.8f);
+    seed[12] = clamp01(decay);
+    seed[13] = clamp01(0.35f + brightness * 0.45f);
+    seed[14] = clamp01(release * 0.7f);
+
+    seed[39] = clamp01(vol_length * 0.85f);
+    seed[40] = clamp01(attack * 0.6f);
+    seed[41] = clamp01(decay * 0.8f);
+    seed[42] = clamp01(0.25f + modulation_ratio * 0.5f);
+    seed[43] = clamp01(release * 0.8f);
+
+    seed[constants::OSC_A_FREQ_LOW_INDEX] = frequency_norm;
+    seed[constants::OSC_A_FREQ_HIGH_INDEX] = frequency_norm;
+    seed[17] = 0.5f;
+    seed[18] = 0.5f;
+    seed[19] = clamp01(0.65f - brightness * 0.25f);
+    seed[20] = clamp01(seed[19] * 0.9f);
+    seed[21] = clamp01(0.25f + brightness * 0.45f);
+    seed[22] = clamp01(seed[21] * 0.9f);
+    seed[23] = clamp01(0.65f + summary.rms * 0.7f);
+    seed[24] = seed[23];
+    seed[25] = clamp01(noisiness * 0.6f);
+    seed[26] = seed[25];
+
+    const float modulator_hz = sanitize_frequency(
+        summary.dominant_frequency_hz *
+        std::clamp(1.0f + brightness * 1.5f + modulation_ratio, 1.0f, 4.0f));
+    const float modulator_norm = hz_to_normalized_frequency(modulator_hz);
+    seed[constants::OSC_B_FREQ_LOW_INDEX] = modulator_norm;
+    seed[constants::OSC_B_FREQ_HIGH_INDEX] = modulator_norm;
+    seed[29] = 0.5f;
+    seed[30] = 0.5f;
+    seed[31] = clamp01(0.45f - brightness * 0.15f);
+    seed[32] = seed[31];
+    seed[33] = clamp01(0.35f + brightness * 0.55f);
+    seed[34] = seed[33];
+    seed[35] = clamp01(0.25f + modulation_ratio * 0.45f);
+    seed[36] = seed[35];
+    seed[37] = clamp01(noisiness * 0.8f);
+    seed[38] = seed[37];
+
+    const float fm_amount = clamp01(modulation_ratio * 0.75f);
+    seed[44] = fm_amount;
+    seed[45] = clamp01(fm_amount + 0.1f);
+
+    seed[constants::HIGH_PASS_CUTOFF_INDEX] = hz_to_filter_normalized(
+        std::max(kMinFilterCutoffHz, summary.dominant_frequency_hz * 0.35f));
+    seed[constants::HIGH_PASS_SLOPE_INDEX] = clamp01(noisiness * 0.35f);
+    seed[constants::LOW_PASS_CUTOFF_INDEX] = hz_to_filter_normalized(
+        std::min(kMaxFilterCutoffHz,
+                 summary.spectral_rolloff_hz * (1.0f + brightness * 0.35f)));
+    seed[constants::LOW_PASS_SLOPE_INDEX] = clamp01(0.2f + brightness * 0.45f);
+    seed[constants::DISTORTION_INDEX] =
+        clamp01((2.8f - summary.crest_factor) * 0.22f + brightness * 0.2f);
+
+    return seed;
+}
+
+std::vector<float> jitter_settings(const std::vector<float>& base, float jitter,
+                                   uint32_t seed_value) {
+    auto result = base;
+    std::mt19937 rng(seed_value);
+    std::normal_distribution<float> noise(0.0f, jitter);
+    for (float& value : result) {
+        value = clamp01(value + noise(rng));
+    }
+    return result;
+}
+
+float elapsed_seconds_since(
+    const std::chrono::steady_clock::time_point& start_time) {
+    return std::chrono::duration_cast<std::chrono::duration<float>>(
+               std::chrono::steady_clock::now() - start_time)
+        .count();
+}
+
+float remaining_seconds(const std::chrono::steady_clock::time_point& start_time,
+                        float time_limit) {
+    if (time_limit <= 0.0f) {
+        return std::numeric_limits<float>::max();
+    }
+    return std::max(0.0f, time_limit - elapsed_seconds_since(start_time));
+}
+
+void report_progress(const TrainingProgressCallback& progress_callback,
+                     int generation_offset, int eval_offset, float elapsed_offset,
+                     float time_limit, float best_loss,
+                     const TrainingProgress& progress) {
+    if (!progress_callback) {
+        return;
+    }
+    progress_callback(TrainingProgress {
+        generation_offset + progress.generation,
+        std::isfinite(best_loss) ? best_loss : progress.best_loss,
+        progress.sigma,
+        eval_offset + progress.eval_count,
+        time_limit > 0.0f
+            ? std::min(time_limit, elapsed_offset + progress.elapsed_seconds)
+            : elapsed_offset + progress.elapsed_seconds,
+    });
+}
+
+std::vector<float> decode_latent(const std::vector<float>& seed,
+                                 const std::vector<std::vector<float>>& embedding,
+                                 const std::vector<float>& latent, float radius) {
+    std::vector<float> decoded(seed);
+    for (size_t row = 0; row < decoded.size(); ++row) {
+        float delta = 0.0f;
+        for (size_t col = 0; col < latent.size(); ++col) {
+            delta += embedding[row][col] * latent[col];
+        }
+        decoded[row] = clamp01(seed[row] + radius * delta);
+    }
+    return decoded;
+}
+
+std::vector<std::vector<float>> make_embedding(size_t rows, size_t cols, std::mt19937& rng) {
+    std::normal_distribution<float> gaussian(0.0f, 1.0f);
+    std::vector<std::vector<float>> embedding(rows, std::vector<float>(cols, 0.0f));
+    for (size_t row = 0; row < rows; ++row) {
+        float norm = 0.0f;
+        for (size_t col = 0; col < cols; ++col) {
+            const float value = gaussian(rng);
+            embedding[row][col] = value;
+            norm += value * value;
+        }
+        norm = std::sqrt(std::max(norm, 1e-9f));
+        for (size_t col = 0; col < cols; ++col) {
+            embedding[row][col] /= norm;
+        }
+    }
+    return embedding;
+}
+
+std::vector<int> all_indices() {
+    std::vector<int> indices(constants::NUM_SETTINGS);
+    std::iota(indices.begin(), indices.end(), 0);
+    return indices;
 }
 
 std::vector<float> select_settings(const std::vector<float>& settings,
@@ -68,16 +570,87 @@ std::vector<float> merge_settings(const std::vector<float>& base, const std::vec
     return merged;
 }
 
-std::vector<int> all_indices() {
-    std::vector<int> indices(constants::NUM_SETTINGS);
-    for (int i = 0; i < constants::NUM_SETTINGS; ++i) {
-        indices[static_cast<size_t>(i)] = i;
-    }
-    return indices;
-}
+CRFMNESResult<float> coordinate_refine(const std::vector<float>& initial_settings,
+                                       const std::vector<float>& time,
+                                       const LossFunction<float>& loss_fn,
+                                       float time_limit, bool verbose,
+                                       const TrainingProgressCallback& progress_callback,
+                                       int generation_offset, int eval_offset,
+                                       float elapsed_offset, float best_loss_so_far) {
+    CRFMNESResult<float> result;
+    result.best_settings = initial_settings;
+    result.best_loss = evaluate_settings(initial_settings, time, loss_fn);
+    result.final_eval_count = 1;
+    result.final_sigma = 0.08f;
 
-float clamp_time_fraction(float value) {
-    return std::max(0.0f, value);
+    auto start_time = std::chrono::steady_clock::now();
+    std::vector<float> steps(initial_settings.size(), 0.08f);
+
+    while (remaining_seconds(start_time, time_limit) > 0.0f) {
+        bool improved = false;
+        for (size_t index = 0; index < result.best_settings.size(); ++index) {
+            if (remaining_seconds(start_time, time_limit) <= 0.0f) {
+                break;
+            }
+
+            const float step = steps[index];
+            if (step < 0.003f) {
+                continue;
+            }
+
+            const float base = result.best_settings[index];
+            float best_candidate_loss = result.best_loss;
+            std::vector<float> best_candidate = result.best_settings;
+
+            for (float direction : {-1.0f, 1.0f}) {
+                auto candidate = result.best_settings;
+                candidate[index] = clamp01(base + direction * step);
+                if (candidate[index] == base) {
+                    continue;
+                }
+                const float candidate_loss =
+                    evaluate_settings(candidate, time, loss_fn);
+                ++result.final_eval_count;
+                if (candidate_loss < best_candidate_loss) {
+                    best_candidate_loss = candidate_loss;
+                    best_candidate = std::move(candidate);
+                }
+            }
+
+            if (best_candidate_loss < result.best_loss) {
+                result.best_loss = best_candidate_loss;
+                result.best_settings = std::move(best_candidate);
+                best_loss_so_far = std::min(best_loss_so_far, result.best_loss);
+                improved = true;
+            } else {
+                steps[index] *= 0.75f;
+            }
+        }
+
+        ++result.iterations_completed;
+        result.final_sigma = *std::max_element(steps.begin(), steps.end());
+        report_progress(progress_callback, generation_offset, eval_offset, elapsed_offset,
+                        time_limit, best_loss_so_far,
+                        TrainingProgress {result.iterations_completed, result.best_loss,
+                                          result.final_sigma, result.final_eval_count,
+                                          elapsed_seconds_since(start_time)});
+
+        if (!improved && result.final_sigma < 0.003f) {
+            break;
+        }
+        if (!improved) {
+            for (float& step : steps) {
+                step *= 0.5f;
+            }
+        }
+    }
+
+    if (verbose) {
+        std::cout << "Coordinate refine: Best Loss = " << result.best_loss
+                  << " | Evals = " << result.final_eval_count << std::endl;
+    }
+
+    return result;
 }
 
 }  // namespace
@@ -215,106 +788,35 @@ TrainingResult train_synth(const std::vector<float>& target_audio, int populatio
                            TrainingProgressCallback progress_callback) {
     const auto time = make_time_axis(constants::NUM_SECONDS, constants::TRAINING_SAMPLE_RATE);
     LossFunction<float> full_loss_fn(target_audio);
-    const std::vector<TrainingStageConfig> stages = {
-        {"coarse",
-         {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 23, 24, 25, 26, 27, 28, 35, 36, 37, 38, 39, 40,
-          41, 42, 43, 44, 45, 46, 48, 50},
-         {2048, 512},
-         0.75f,
-         0.30f,
-         0.75f},
-        {"shape",
-         {10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 29, 30, 31, 32, 33, 34, 47, 49},
-         {4096, 1024, 512},
-         0.40f,
-         0.25f,
-         0.85f},
-        {"refine", all_indices(), {4096, 2048, 1024, 512}, 0.18f, 0.45f, 1.00f},
+    const auto summary = summarize_target_audio(target_audio, full_loss_fn.features());
+    const auto initial_settings = make_seed_from_summary(summary);
+    const int effective_population =
+        population_size > 0 ? population_size : kDefaultCRFMNESPopulationSize;
+    const float effective_sigma = std::clamp(initial_sigma, 0.35f, 1.25f);
+
+    CRFMNESOptions<float> options;
+    options.initial_settings = initial_settings;
+
+    auto synth_fn = [](const std::vector<float>& settings, const std::vector<float>& local_time) {
+        return synth(settings, local_time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
     };
 
-    const float total_fraction = std::accumulate(
-        stages.begin(), stages.end(), 0.0f,
-        [](float sum, const TrainingStageConfig& stage) { return sum + clamp_time_fraction(stage.time_fraction); });
+    auto nes_progress = [&](const CRFMNESProgress<float>& progress) {
+        report_progress(progress_callback, 0, 0, 0.0f, time_limit, progress.best_loss, progress);
+    };
 
-    auto current_settings = default_settings();
-    TrainingResult aggregate_result;
-    aggregate_result.best_settings = current_settings;
-    aggregate_result.best_loss = std::numeric_limits<float>::max();
+    auto result =
+        run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, effective_population,
+                                        effective_sigma, time_limit, 10000, verbose,
+                                        nes_progress, options);
 
-    float completed_fraction = 0.0f;
-    int total_generations = 0;
-    int total_evals = 0;
-    float final_sigma = initial_sigma;
-
-    for (const auto& stage : stages) {
-        const float normalized_fraction =
-            total_fraction > 0.0f ? stage.time_fraction / total_fraction
-                                  : 1.0f / static_cast<float>(stages.size());
-        const float stage_time_limit =
-            time_limit > 0.0f ? std::max(1.0f, time_limit * normalized_fraction) : 0.0f;
-        int stage_population =
-            std::max(8, static_cast<int>(std::round(population_size * stage.population_scale)));
-        if ((stage_population % 2) != 0) {
-            ++stage_population;
-        }
-
-        LossFunction<float> loss_fn(target_audio, stage.fft_sizes);
-        const auto seed = select_settings(current_settings, stage.indices);
-        auto stage_synth_fn =
-            [base = current_settings, indices = stage.indices](const std::vector<float>& stage_settings,
-                                                               const std::vector<float>& time_axis) {
-                const auto merged = merge_settings(base, indices, stage_settings);
-                return synth(merged, time_axis, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
-            };
-
-        const float stage_sigma = std::max(0.08f, initial_sigma * stage.sigma_scale);
-        CRFMNESOptions<float> stage_options;
-        stage_options.initial_settings = seed;
-
-        auto stage_result = run_crfmnes_optimization<float>(
-            loss_fn, time, stage_synth_fn, stage_population, stage_sigma, stage_time_limit, 10000,
-            verbose,
-            [&, normalized_fraction, completed_fraction](const TrainingProgress& progress) {
-                if (!progress_callback) {
-                    return;
-                }
-                TrainingProgress stage_progress = progress;
-                stage_progress.generation = total_generations + progress.generation;
-                stage_progress.eval_count = total_evals + progress.eval_count;
-                stage_progress.elapsed_seconds =
-                    time_limit > 0.0f
-                        ? std::min(time_limit, (completed_fraction + normalized_fraction *
-                                                                       std::clamp(progress.elapsed_seconds /
-                                                                                      stage_time_limit,
-                                                                                  0.0f, 1.0f)) *
-                                                 time_limit)
-                        : progress.elapsed_seconds;
-                progress_callback(stage_progress);
-            },
-            stage_options);
-
-        current_settings = merge_settings(current_settings, stage.indices, stage_result.best_settings);
-        total_generations += stage_result.iterations_completed;
-        total_evals += stage_result.final_eval_count;
-        final_sigma = stage_result.final_sigma;
-        completed_fraction += normalized_fraction;
-
-        const auto rendered = synth(current_settings, time,
-                                    static_cast<float>(constants::TRAINING_SAMPLE_RATE));
-        const float full_loss = full_loss_fn(rendered);
-        if (full_loss < aggregate_result.best_loss) {
-            aggregate_result.best_loss = full_loss;
-            aggregate_result.best_settings = current_settings;
-        }
+    if (result.best_settings.empty()) {
+        result.best_settings = initial_settings;
+        result.best_loss = evaluate_settings(initial_settings, time, full_loss_fn);
+        result.final_eval_count = std::max(result.final_eval_count, 1);
     }
 
-    aggregate_result.iterations_completed = total_generations;
-    aggregate_result.final_eval_count = total_evals;
-    aggregate_result.final_sigma = final_sigma;
-    if (aggregate_result.best_settings.empty()) {
-        aggregate_result.best_settings = current_settings;
-    }
-    return aggregate_result;
+    return result;
 }
 
 std::string serialize_settings(const std::vector<float>& settings) {

@@ -147,6 +147,9 @@ inline std::vector<T> evaluate_population(
     const size_t num_settings = lambda > 0 ? population_logits.front().size() : 0;
 
     std::vector<std::vector<T>> generated(lambda);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
     for (size_t i = 0; i < lambda; ++i) {
         std::vector<T> settings(num_settings);
         for (size_t j = 0; j < num_settings; ++j) {

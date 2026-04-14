@@ -455,6 +455,96 @@ inline T weighted_l1_loss(const std::vector<T>& x, const std::vector<T>& y,
 }
 
 template <typename T>
+inline T l1_loss(const std::vector<T>& x, const std::vector<T>& y) {
+    const size_t n = std::min(x.size(), y.size());
+    if (n == 0) return static_cast<T>(0);
+
+    T loss = static_cast<T>(0);
+#if defined(HAS_OPENMP)
+#pragma omp simd reduction(+ : loss)
+#endif
+    for (size_t i = 0; i < n; ++i) {
+        loss += std::abs(x[i] - y[i]);
+    }
+
+    return loss / static_cast<T>(n);
+}
+
+template <typename T>
+inline std::vector<T> normalize_shape(std::vector<T> values) {
+    if (values.empty()) {
+        return values;
+    }
+
+    T peak = static_cast<T>(0);
+    for (const T value : values) {
+        peak = std::max(peak, std::abs(value));
+    }
+
+    if (peak <= static_cast<T>(1e-8)) {
+        return values;
+    }
+
+    const T inv_peak = static_cast<T>(1) / peak;
+#if defined(HAS_OPENMP)
+#pragma omp simd
+#endif
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] *= inv_peak;
+    }
+
+    return values;
+}
+
+template <typename T>
+inline std::vector<T> compute_envelope(const std::vector<T>& x, size_t window = 1024,
+                                       size_t hop = 256) {
+    if (x.empty()) {
+        return {};
+    }
+
+    window = std::max<size_t>(1, std::min(window, x.size()));
+    hop = std::max<size_t>(1, hop);
+    const size_t num_frames = 1 + (x.size() - 1) / hop;
+    std::vector<T> envelope(num_frames, static_cast<T>(0));
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const size_t start = frame * hop;
+        const size_t end = std::min(start + window, x.size());
+        T sum = static_cast<T>(0);
+
+#if defined(HAS_OPENMP)
+#pragma omp simd reduction(+ : sum)
+#endif
+        for (size_t i = start; i < end; ++i) {
+            sum += x[i] * x[i];
+        }
+
+        const T mean = sum / static_cast<T>(std::max<size_t>(1, end - start));
+        envelope[frame] = std::sqrt(mean);
+    }
+
+    return normalize_shape(std::move(envelope));
+}
+
+template <typename T>
+inline std::vector<T> compute_delta(const std::vector<T>& x) {
+    if (x.size() < 2) {
+        return {};
+    }
+
+    std::vector<T> delta(x.size() - 1, static_cast<T>(0));
+#if defined(HAS_OPENMP)
+#pragma omp simd
+#endif
+    for (size_t i = 1; i < x.size(); ++i) {
+        delta[i - 1] = x[i] - x[i - 1];
+    }
+
+    return delta;
+}
+
+template <typename T>
 inline std::vector<size_t> compute_log_band_edges(size_t num_freqs, size_t num_bands) {
     if (num_freqs == 0) {
         return {0};
@@ -646,6 +736,10 @@ struct TargetFeaturesFast {
     std::vector<std::vector<T>> cepstra;
     std::vector<std::vector<T>> cepstral_weights;
     std::vector<size_t> num_cepstra;
+
+    // Global envelope-shape features, normalized to focus on contour.
+    std::vector<T> envelope;
+    std::vector<T> envelope_delta;
 };
 
 /**
@@ -655,7 +749,7 @@ struct TargetFeaturesFast {
  */
 template <typename T>
 inline TargetFeaturesFast<T> precompute_target_features_fast(
-    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512}) {
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {2048, 1024, 512}) {
     TargetFeaturesFast<T> features;
     const size_t num_scales = fft_sizes.size();
 
@@ -675,6 +769,8 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     features.cepstra.resize(num_scales);
     features.cepstral_weights.resize(num_scales);
     features.num_cepstra.resize(num_scales);
+    features.envelope = detail::compute_envelope(target);
+    features.envelope_delta = detail::compute_delta(features.envelope);
 
     for (size_t scale = 0; scale < num_scales; ++scale) {
         size_t n_fft = fft_sizes[scale];
@@ -692,13 +788,13 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
             // fine cepstral and coarse representations from that same spectrogram.
             features.stfts[scale] =
                 detail::stft_with_positions(target, win_length, n_fft, positions);
-            features.num_fine_cepstra[scale] = std::min<size_t>(32, features.num_freqs[scale]);
+            features.num_fine_cepstra[scale] = std::min<size_t>(16, features.num_freqs[scale]);
             features.fine_cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
                 features.fine_weights[scale], features.num_fine_cepstra[scale]);
             features.fine_cepstra[scale] = detail::weighted_cepstrum_spectrogram(
                 features.stfts[scale], features.num_freqs[scale], features.fine_weights[scale],
                 features.num_fine_cepstra[scale]);
-            const size_t band_count = std::min<size_t>(24, std::max<size_t>(8, n_fft / 64));
+            const size_t band_count = std::min<size_t>(16, std::max<size_t>(8, n_fft / 128));
             features.band_edges[scale] =
                 detail::compute_log_band_edges<T>(features.num_freqs[scale], band_count);
             features.num_bands[scale] = features.band_edges[scale].size() - 1;
@@ -707,7 +803,7 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
                 features.fine_weights[scale]);
             features.band_weights[scale] = detail::aggregate_band_weights(
                 features.fine_weights[scale], features.band_edges[scale]);
-            features.num_cepstra[scale] = std::min<size_t>(13, features.num_bands[scale]);
+            features.num_cepstra[scale] = std::min<size_t>(8, features.num_bands[scale]);
             features.cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
                 features.band_weights[scale], features.num_cepstra[scale]);
             features.cepstra[scale] = detail::weighted_cepstrum_spectrogram(
@@ -731,6 +827,8 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     T coarse_spectral_loss = static_cast<T>(0);
     T fine_cepstral_loss = static_cast<T>(0);
     T coarse_cepstral_loss = static_cast<T>(0);
+    T envelope_loss = static_cast<T>(0);
+    T envelope_delta_loss = static_cast<T>(0);
     size_t active_scales = 0;
     const size_t num_scales = target_features.fft_sizes.size();
 
@@ -794,10 +892,21 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     coarse_spectral_loss /= static_cast<T>(active_scales);
     fine_cepstral_loss /= static_cast<T>(active_scales);
     coarse_cepstral_loss /= static_cast<T>(active_scales);
-    return static_cast<T>(0.30) * fine_spectral_loss +
-           static_cast<T>(0.20) * coarse_spectral_loss +
-           static_cast<T>(0.30) * fine_cepstral_loss +
-           static_cast<T>(0.20) * coarse_cepstral_loss;
+
+    if (!target_features.envelope.empty()) {
+        const auto generated_envelope = detail::compute_envelope(generated);
+        envelope_loss = detail::l1_loss(generated_envelope, target_features.envelope);
+        envelope_delta_loss = detail::l1_loss(detail::compute_delta(generated_envelope),
+                                              target_features.envelope_delta);
+    }
+
+    const T spectral_loss = static_cast<T>(0.40) * fine_spectral_loss +
+                            static_cast<T>(0.20) * coarse_spectral_loss +
+                            static_cast<T>(0.20) * fine_cepstral_loss +
+                            static_cast<T>(0.10) * coarse_cepstral_loss;
+    const T shape_loss =
+        static_cast<T>(0.07) * envelope_loss + static_cast<T>(0.03) * envelope_delta_loss;
+    return spectral_loss + shape_loss;
 }
 
 /**
@@ -832,7 +941,7 @@ template <typename T>
 class LossFunction {
    public:
     LossFunction(const std::vector<T>& target,
-                 const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512})
+                 const std::vector<size_t>& fft_sizes = {2048, 1024, 512})
         : target_(target), fft_sizes_(fft_sizes) {
         features_ = precompute_target_features_fast(target, fft_sizes);
     }
