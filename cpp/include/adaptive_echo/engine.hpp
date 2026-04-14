@@ -14,7 +14,7 @@ using TrainingProgress = CRFMNESProgress<float>;
 using TrainingProgressCallback = std::function<void(const TrainingProgress&)>;
 
 struct CoarseSearchOptions {
-    float time_fraction = 0.40f;
+    float time_fraction = 0.25f;
     int candidate_multiplier = 4;
     int min_candidates = 20;
     float wide_noise_std = 0.33762205f;
