@@ -890,7 +890,7 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
     const auto summary_seed = make_seed_from_summary(summary);
     const int effective_population =
         population_size > 0 ? population_size : kDefaultCRFMNESPopulationSize;
-    const float effective_sigma = std::clamp(initial_sigma, 0.35f, 1.25f);
+    const float effective_sigma = initial_sigma;
     const float coarse_time_budget =
         time_limit > 0.0f ? std::max(0.35f, time_limit * std::clamp(coarse_options.time_fraction, 0.1f, 0.85f))
                           : 1.0f;
