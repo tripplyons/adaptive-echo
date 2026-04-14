@@ -580,6 +580,67 @@ inline std::vector<T> compute_windowed_zcr(const std::vector<T>& x, size_t windo
 }
 
 template <typename T>
+inline std::vector<T> compute_band_centroid_trajectory(const std::vector<T>& band_spec,
+                                                       size_t num_bands) {
+    if (band_spec.empty() || num_bands == 0) {
+        return {};
+    }
+
+    const size_t num_frames = band_spec.size() / num_bands;
+    std::vector<T> centroids(num_frames, static_cast<T>(0));
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* band_ptr = &band_spec[frame * num_bands];
+        T weighted_sum = static_cast<T>(0);
+        T magnitude_sum = static_cast<T>(0);
+        for (size_t band = 0; band < num_bands; ++band) {
+            const T magnitude = std::max(band_ptr[band], static_cast<T>(0));
+            weighted_sum += static_cast<T>(band) * magnitude;
+            magnitude_sum += magnitude;
+        }
+        if (magnitude_sum > static_cast<T>(1e-8)) {
+            centroids[frame] = weighted_sum /
+                               (magnitude_sum * static_cast<T>(std::max<size_t>(1, num_bands - 1)));
+        }
+    }
+
+    return centroids;
+}
+
+template <typename T>
+inline std::vector<T> compute_spectral_flux_trajectory(const std::vector<T>& spec,
+                                                       size_t num_features) {
+    if (spec.empty() || num_features == 0) {
+        return {};
+    }
+
+    const size_t num_frames = spec.size() / num_features;
+    if (num_frames < 2) {
+        return {};
+    }
+
+    std::vector<T> flux(num_frames - 1, static_cast<T>(0));
+    constexpr T epsilon = static_cast<T>(1e-8);
+
+    for (size_t frame = 1; frame < num_frames; ++frame) {
+        const T* prev_ptr = &spec[(frame - 1) * num_features];
+        const T* curr_ptr = &spec[frame * num_features];
+        T frame_flux = static_cast<T>(0);
+#if defined(HAS_OPENMP)
+#pragma omp simd reduction(+ : frame_flux)
+#endif
+        for (size_t feature = 0; feature < num_features; ++feature) {
+            const T prev_log = std::log(prev_ptr[feature] + epsilon);
+            const T curr_log = std::log(curr_ptr[feature] + epsilon);
+            frame_flux += std::max(static_cast<T>(0), curr_log - prev_log);
+        }
+        flux[frame - 1] = frame_flux / static_cast<T>(num_features);
+    }
+
+    return normalize_shape(std::move(flux));
+}
+
+template <typename T>
 inline std::vector<size_t> compute_log_band_edges(size_t num_freqs, size_t num_bands) {
     if (num_freqs == 0) {
         return {0};
@@ -777,6 +838,8 @@ struct TargetFeaturesFast {
     std::vector<T> envelope_delta;
     std::vector<T> zcr;
     std::vector<T> zcr_delta;
+    std::vector<std::vector<T>> band_centroids;
+    std::vector<std::vector<T>> band_flux;
 };
 
 /**
@@ -806,6 +869,8 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     features.cepstra.resize(num_scales);
     features.cepstral_weights.resize(num_scales);
     features.num_cepstra.resize(num_scales);
+    features.band_centroids.resize(num_scales);
+    features.band_flux.resize(num_scales);
     features.envelope = detail::compute_envelope(target);
     features.envelope_delta = detail::compute_delta(features.envelope);
     features.zcr = detail::compute_windowed_zcr(target);
@@ -845,6 +910,10 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
             features.num_cepstra[scale] = std::min<size_t>(8, features.num_bands[scale]);
             features.cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
                 features.band_weights[scale], features.num_cepstra[scale]);
+            features.band_centroids[scale] = detail::compute_band_centroid_trajectory(
+                features.band_stfts[scale], features.num_bands[scale]);
+            features.band_flux[scale] = detail::compute_spectral_flux_trajectory(
+                features.band_stfts[scale], features.num_bands[scale]);
             features.cepstra[scale] = detail::weighted_cepstrum_spectrogram(
                 features.band_stfts[scale], features.num_bands[scale], features.band_weights[scale],
                 features.num_cepstra[scale]);
@@ -870,6 +939,8 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     T envelope_delta_loss = static_cast<T>(0);
     T zcr_loss = static_cast<T>(0);
     T zcr_delta_loss = static_cast<T>(0);
+    T centroid_loss = static_cast<T>(0);
+    T flux_loss = static_cast<T>(0);
     size_t active_scales = 0;
     const size_t num_scales = target_features.fft_sizes.size();
 
@@ -912,6 +983,19 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
             coarse_spectral_loss += detail::log_magnitude_loss(
                 x_band_stft, target_features.band_stfts[scale],
                 target_features.band_weights[scale], target_features.num_bands[scale]);
+            const auto x_band_centroids = detail::compute_band_centroid_trajectory(
+                x_band_stft, target_features.num_bands[scale]);
+            if (!x_band_centroids.empty() &&
+                x_band_centroids.size() == target_features.band_centroids[scale].size()) {
+                centroid_loss +=
+                    detail::l1_loss(x_band_centroids, target_features.band_centroids[scale]);
+            }
+            const auto x_band_flux = detail::compute_spectral_flux_trajectory(
+                x_band_stft, target_features.num_bands[scale]);
+            if (!x_band_flux.empty() &&
+                x_band_flux.size() == target_features.band_flux[scale].size()) {
+                flux_loss += detail::l1_loss(x_band_flux, target_features.band_flux[scale]);
+            }
             const auto x_cepstra = detail::weighted_cepstrum_spectrogram(
                 x_band_stft, target_features.num_bands[scale], target_features.band_weights[scale],
                 target_features.num_cepstra[scale]);
@@ -933,6 +1017,8 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     coarse_spectral_loss /= static_cast<T>(active_scales);
     fine_cepstral_loss /= static_cast<T>(active_scales);
     coarse_cepstral_loss /= static_cast<T>(active_scales);
+    centroid_loss /= static_cast<T>(active_scales);
+    flux_loss /= static_cast<T>(active_scales);
 
     if (!target_features.envelope.empty()) {
         const auto generated_envelope = detail::compute_envelope(generated);
@@ -947,14 +1033,16 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
                                          target_features.zcr_delta);
     }
 
-    const T spectral_loss = static_cast<T>(0.40) * fine_spectral_loss +
-                            static_cast<T>(0.20) * coarse_spectral_loss +
-                            static_cast<T>(0.20) * fine_cepstral_loss +
-                            static_cast<T>(0.10) * coarse_cepstral_loss;
+    const T spectral_loss = static_cast<T>(0.36) * fine_spectral_loss +
+                            static_cast<T>(0.18) * coarse_spectral_loss +
+                            static_cast<T>(0.18) * fine_cepstral_loss +
+                            static_cast<T>(0.08) * coarse_cepstral_loss;
     const T shape_loss = static_cast<T>(0.05) * envelope_loss +
                          static_cast<T>(0.02) * envelope_delta_loss +
                          static_cast<T>(0.02) * zcr_loss +
-                         static_cast<T>(0.01) * zcr_delta_loss;
+                         static_cast<T>(0.01) * zcr_delta_loss +
+                         static_cast<T>(0.05) * centroid_loss +
+                         static_cast<T>(0.05) * flux_loss;
     return spectral_loss + shape_loss;
 }
 
