@@ -545,6 +545,41 @@ inline std::vector<T> compute_delta(const std::vector<T>& x) {
 }
 
 template <typename T>
+inline std::vector<T> compute_windowed_zcr(const std::vector<T>& x, size_t window = 1024,
+                                           size_t hop = 256) {
+    if (x.size() < 2) {
+        return {};
+    }
+
+    window = std::max<size_t>(2, std::min(window, x.size()));
+    hop = std::max<size_t>(1, hop);
+    const size_t num_frames = 1 + (x.size() - 1) / hop;
+    std::vector<T> zcr(num_frames, static_cast<T>(0));
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const size_t start = frame * hop;
+        const size_t end = std::min(start + window, x.size());
+        if (end - start < 2) {
+            continue;
+        }
+
+        size_t crossings = 0;
+#if defined(HAS_OPENMP)
+#pragma omp simd reduction(+ : crossings)
+#endif
+        for (size_t i = start + 1; i < end; ++i) {
+            const bool crossed = (x[i - 1] >= static_cast<T>(0) && x[i] < static_cast<T>(0)) ||
+                                 (x[i - 1] < static_cast<T>(0) && x[i] >= static_cast<T>(0));
+            crossings += crossed ? 1u : 0u;
+        }
+
+        zcr[frame] = static_cast<T>(crossings) / static_cast<T>(end - start - 1);
+    }
+
+    return zcr;
+}
+
+template <typename T>
 inline std::vector<size_t> compute_log_band_edges(size_t num_freqs, size_t num_bands) {
     if (num_freqs == 0) {
         return {0};
@@ -740,6 +775,8 @@ struct TargetFeaturesFast {
     // Global envelope-shape features, normalized to focus on contour.
     std::vector<T> envelope;
     std::vector<T> envelope_delta;
+    std::vector<T> zcr;
+    std::vector<T> zcr_delta;
 };
 
 /**
@@ -771,6 +808,8 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     features.num_cepstra.resize(num_scales);
     features.envelope = detail::compute_envelope(target);
     features.envelope_delta = detail::compute_delta(features.envelope);
+    features.zcr = detail::compute_windowed_zcr(target);
+    features.zcr_delta = detail::compute_delta(features.zcr);
 
     for (size_t scale = 0; scale < num_scales; ++scale) {
         size_t n_fft = fft_sizes[scale];
@@ -829,6 +868,8 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
     T coarse_cepstral_loss = static_cast<T>(0);
     T envelope_loss = static_cast<T>(0);
     T envelope_delta_loss = static_cast<T>(0);
+    T zcr_loss = static_cast<T>(0);
+    T zcr_delta_loss = static_cast<T>(0);
     size_t active_scales = 0;
     const size_t num_scales = target_features.fft_sizes.size();
 
@@ -899,13 +940,21 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
         envelope_delta_loss = detail::l1_loss(detail::compute_delta(generated_envelope),
                                               target_features.envelope_delta);
     }
+    if (!target_features.zcr.empty()) {
+        const auto generated_zcr = detail::compute_windowed_zcr(generated);
+        zcr_loss = detail::l1_loss(generated_zcr, target_features.zcr);
+        zcr_delta_loss = detail::l1_loss(detail::compute_delta(generated_zcr),
+                                         target_features.zcr_delta);
+    }
 
     const T spectral_loss = static_cast<T>(0.40) * fine_spectral_loss +
                             static_cast<T>(0.20) * coarse_spectral_loss +
                             static_cast<T>(0.20) * fine_cepstral_loss +
                             static_cast<T>(0.10) * coarse_cepstral_loss;
-    const T shape_loss =
-        static_cast<T>(0.07) * envelope_loss + static_cast<T>(0.03) * envelope_delta_loss;
+    const T shape_loss = static_cast<T>(0.05) * envelope_loss +
+                         static_cast<T>(0.02) * envelope_delta_loss +
+                         static_cast<T>(0.02) * zcr_loss +
+                         static_cast<T>(0.01) * zcr_delta_loss;
     return spectral_loss + shape_loss;
 }
 

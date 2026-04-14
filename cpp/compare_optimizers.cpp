@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -1119,8 +1120,18 @@ OptimizationRunResult run_simulated_annealing_optimizer(const std::vector<float>
 void print_usage() {
     std::cout << "Usage: compare_optimizers <input.wav> [time_limit_seconds] [options]\n";
     std::cout << "Options:\n";
-    std::cout << "  --optimizer <all|bayes-tpe>\n";
+    std::cout << "  --optimizer <all|bayes-tpe|crfmnes>\n";
     std::cout << "  --json\n";
+    std::cout << "  --crfmnes-population <int>\n";
+    std::cout << "  --crfmnes-sigma <float>\n";
+    std::cout << "  --coarse-multiplier <int>\n";
+    std::cout << "  --coarse-min-candidates <int>\n";
+    std::cout << "  --coarse-wide-noise <float>\n";
+    std::cout << "  --coarse-medium-noise <float>\n";
+    std::cout << "  --coarse-summary-mix <float>\n";
+    std::cout << "  --coarse-uniform-mix <float>\n";
+    std::cout << "  --coarse-summary-seed-mix <float>\n";
+    std::cout << "  --coarse-default-seed-mix <float>\n";
     std::cout << "  --tpe-gamma <float>\n";
     std::cout << "  --tpe-latent-divisor <int>\n";
     std::cout << "  --tpe-max-latent <int>\n";
@@ -1153,6 +1164,9 @@ int main(int argc, char** argv) {
 
         std::string optimizer_mode = "all";
         bool json_output = false;
+        int crfmnes_population = adaptive_echo::kDefaultCRFMNESPopulationSize;
+        float crfmnes_sigma = adaptive_echo::kDefaultCRFMNESInitialSigma;
+        adaptive_echo::CoarseSearchOptions coarse_options;
         TPEHyperparameters tpe_hyperparams;
 
         auto require_value = [&](int index) {
@@ -1170,6 +1184,36 @@ int main(int argc, char** argv) {
             } else if (option == "--json") {
                 json_output = true;
                 ++arg_index;
+            } else if (option == "--crfmnes-population") {
+                crfmnes_population = std::stoi(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--crfmnes-sigma") {
+                crfmnes_sigma = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-multiplier") {
+                coarse_options.candidate_multiplier = std::stoi(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-min-candidates") {
+                coarse_options.min_candidates = std::stoi(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-wide-noise") {
+                coarse_options.wide_noise_std = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-medium-noise") {
+                coarse_options.medium_noise_std = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-summary-mix") {
+                coarse_options.summary_default_mix = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-uniform-mix") {
+                coarse_options.exploratory_uniform_mix = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-summary-seed-mix") {
+                coarse_options.exploratory_summary_mix = std::stof(require_value(arg_index));
+                arg_index += 2;
+            } else if (option == "--coarse-default-seed-mix") {
+                coarse_options.exploratory_default_mix = std::stof(require_value(arg_index));
+                arg_index += 2;
             } else if (option == "--tpe-gamma") {
                 tpe_hyperparams.gamma = std::stod(require_value(arg_index));
                 arg_index += 2;
@@ -1216,18 +1260,68 @@ int main(int argc, char** argv) {
                                                         adaptive_echo::constants::TRAINING_SAMPLE_RATE);
         adaptive_echo::LossFunction<float> full_loss(target_audio);
 
-        const auto crfmnes_start = std::chrono::steady_clock::now();
-        auto crfmnes_result = adaptive_echo::train_synth(
-            target_audio, adaptive_echo::kDefaultCRFMNESPopulationSize,
-            adaptive_echo::kDefaultCRFMNESInitialSigma, static_cast<float>(time_limit_seconds), false);
-        const double crfmnes_elapsed =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - crfmnes_start).count();
+        std::optional<adaptive_echo::TrainingResult> crfmnes_result;
+        double crfmnes_elapsed = 0.0;
+        if (optimizer_mode == "all" || optimizer_mode == "crfmnes") {
+            const auto crfmnes_start = std::chrono::steady_clock::now();
+            crfmnes_result = adaptive_echo::train_synth_with_coarse_options(
+                target_audio, coarse_options, crfmnes_population, crfmnes_sigma,
+                static_cast<float>(time_limit_seconds), false);
+            crfmnes_elapsed =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - crfmnes_start).count();
+        }
 
-        auto bayes_result = run_bayesian_optimizer(target_audio, time_limit_seconds, tpe_hyperparams);
+        std::optional<OptimizationRunResult> bayes_result;
+        if (optimizer_mode == "all" || optimizer_mode == "bayes-tpe") {
+            bayes_result = run_bayesian_optimizer(target_audio, time_limit_seconds, tpe_hyperparams);
+        }
+
+        if (optimizer_mode == "crfmnes") {
+            const auto crfmnes_audio =
+                adaptive_echo::synth(crfmnes_result->best_settings, time,
+                                     static_cast<float>(adaptive_echo::constants::TRAINING_SAMPLE_RATE));
+            const float crfmnes_loss = full_loss(crfmnes_audio);
+            const std::string crfmnes_wav = "build/optimizer_compare/crfmnes_output.wav";
+            write_wav_file(crfmnes_wav, crfmnes_audio, adaptive_echo::constants::TRAINING_SAMPLE_RATE);
+
+            if (json_output) {
+                std::cout << "{";
+                std::cout << "\"optimizer\":\"crfmnes\",";
+                std::cout << "\"input\":\"" << input_path << "\",";
+                std::cout << "\"loss\":" << std::fixed << std::setprecision(6) << crfmnes_loss << ",";
+                std::cout << "\"elapsed\":" << crfmnes_elapsed << ",";
+                std::cout << "\"evals\":" << crfmnes_result->final_eval_count << ",";
+                std::cout << "\"output_wav\":\"" << crfmnes_wav << "\",";
+                std::cout << "\"hyperparameters\":{";
+                std::cout << "\"population_size\":" << crfmnes_population << ",";
+                std::cout << "\"initial_sigma\":" << crfmnes_sigma << ",";
+                std::cout << "\"coarse_candidate_multiplier\":" << coarse_options.candidate_multiplier
+                          << ",";
+                std::cout << "\"coarse_min_candidates\":" << coarse_options.min_candidates << ",";
+                std::cout << "\"coarse_wide_noise_std\":" << coarse_options.wide_noise_std << ",";
+                std::cout << "\"coarse_medium_noise_std\":" << coarse_options.medium_noise_std << ",";
+                std::cout << "\"coarse_summary_default_mix\":" << coarse_options.summary_default_mix
+                          << ",";
+                std::cout << "\"coarse_exploratory_uniform_mix\":"
+                          << coarse_options.exploratory_uniform_mix << ",";
+                std::cout << "\"coarse_exploratory_summary_mix\":"
+                          << coarse_options.exploratory_summary_mix << ",";
+                std::cout << "\"coarse_exploratory_default_mix\":"
+                          << coarse_options.exploratory_default_mix;
+                std::cout << "}}";
+                std::cout << "\n";
+            } else {
+                std::cout << "CR-FM-NES | loss " << std::fixed << std::setprecision(4)
+                          << crfmnes_loss << " | elapsed " << crfmnes_elapsed << "s | evals "
+                          << crfmnes_result->final_eval_count << "\n";
+                std::cout << crfmnes_wav << "\n";
+            }
+            return 0;
+        }
 
         if (optimizer_mode == "bayes-tpe") {
             const auto bayes_audio =
-                adaptive_echo::synth(bayes_result.best_settings, time,
+                adaptive_echo::synth(bayes_result->best_settings, time,
                                      static_cast<float>(adaptive_echo::constants::TRAINING_SAMPLE_RATE));
             const float bayes_loss = full_loss(bayes_audio);
             const std::string bayes_wav = "build/optimizer_compare/bayes_tpe_output.wav";
@@ -1238,8 +1332,8 @@ int main(int argc, char** argv) {
                 std::cout << "\"optimizer\":\"bayes-tpe\",";
                 std::cout << "\"input\":\"" << input_path << "\",";
                 std::cout << "\"loss\":" << std::fixed << std::setprecision(6) << bayes_loss << ",";
-                std::cout << "\"elapsed\":" << bayes_result.elapsed_seconds << ",";
-                std::cout << "\"evals\":" << bayes_result.eval_count << ",";
+                std::cout << "\"elapsed\":" << bayes_result->elapsed_seconds << ",";
+                std::cout << "\"evals\":" << bayes_result->eval_count << ",";
                 std::cout << "\"output_wav\":\"" << bayes_wav << "\",";
                 std::cout << "\"hyperparameters\":{";
                 std::cout << "\"gamma\":" << tpe_hyperparams.gamma << ",";
@@ -1258,8 +1352,8 @@ int main(int argc, char** argv) {
                 std::cout << "\n";
             } else {
                 std::cout << "Bayes-TPE | loss " << std::fixed << std::setprecision(4) << bayes_loss
-                          << " | elapsed " << bayes_result.elapsed_seconds << "s | evals "
-                          << bayes_result.eval_count << "\n";
+                          << " | elapsed " << bayes_result->elapsed_seconds << "s | evals "
+                          << bayes_result->eval_count << "\n";
                 std::cout << bayes_wav << "\n";
             }
             return 0;
@@ -1271,10 +1365,10 @@ int main(int argc, char** argv) {
         auto sa_result = run_simulated_annealing_optimizer(target_audio, time_limit_seconds);
 
         const auto crfmnes_audio =
-            adaptive_echo::synth(crfmnes_result.best_settings, time,
+            adaptive_echo::synth(crfmnes_result->best_settings, time,
                                  static_cast<float>(adaptive_echo::constants::TRAINING_SAMPLE_RATE));
         const auto bayes_audio =
-            adaptive_echo::synth(bayes_result.best_settings, time,
+            adaptive_echo::synth(bayes_result->best_settings, time,
                                  static_cast<float>(adaptive_echo::constants::TRAINING_SAMPLE_RATE));
         const auto jade_audio =
             adaptive_echo::synth(jade_result.best_settings, time,
@@ -1315,9 +1409,9 @@ int main(int argc, char** argv) {
         std::cout << "Optimizer comparison\n";
         std::cout << "-----------------------------------------------\n";
         std::cout << "CR-FM-NES  | loss " << crfmnes_loss << " | elapsed " << crfmnes_elapsed
-                  << "s | evals " << crfmnes_result.final_eval_count << "\n";
+                  << "s | evals " << crfmnes_result->final_eval_count << "\n";
         std::cout << "Bayes-TPE  | loss " << bayes_loss << " | elapsed "
-                  << bayes_result.elapsed_seconds << "s | evals " << bayes_result.eval_count
+                  << bayes_result->elapsed_seconds << "s | evals " << bayes_result->eval_count
                   << "\n";
         std::cout << "JADE-DE    | loss " << jade_loss << " | elapsed "
                   << jade_result.elapsed_seconds << "s | evals " << jade_result.eval_count

@@ -49,6 +49,8 @@ struct TargetAudioSummary {
 struct CandidateResult {
     std::vector<float> settings;
     float full_loss = std::numeric_limits<float>::max();
+    int eval_count = 0;
+    int iterations_completed = 0;
 };
 
 struct TPEHyperparameters {
@@ -195,6 +197,8 @@ float hz_to_filter_normalized(float cutoff_hz) {
     return clamp01(std::log(cutoff_hz / kMinFilterCutoffHz) / std::log(1000.0f));
 }
 
+float elapsed_seconds_since(const std::chrono::steady_clock::time_point& start_time);
+
 void normalize_audio(std::vector<float>& audio, float target_peak) {
     float max_value = 0.0f;
     for (float sample : audio) {
@@ -231,6 +235,97 @@ std::vector<float> evaluate_settings_batch(const std::vector<std::vector<float>>
     }
 
     return loss_fn.compute_batch(rendered_batch);
+}
+
+CandidateResult run_coarse_search(const std::vector<float>& summary_seed,
+                                  const std::vector<float>& time,
+                                  const LossFunction<float>& loss_fn,
+                                  int population_size,
+                                  const CoarseSearchOptions& coarse_options,
+                                  float time_limit_seconds, float coarse_sigma,
+                                  const TrainingProgressCallback& progress_callback) {
+    auto& rng = detail::get_crfmnes_rng();
+    std::normal_distribution<float> wide_noise(0.0f, coarse_options.wide_noise_std);
+    std::normal_distribution<float> medium_noise(0.0f, coarse_options.medium_noise_std);
+    std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
+
+    const auto default_seed = default_settings();
+    const size_t num_settings = summary_seed.size();
+    const int candidate_count =
+        std::max(coarse_options.min_candidates,
+                 population_size * std::max(1, coarse_options.candidate_multiplier));
+
+    std::vector<float> midpoint(num_settings, 0.5f);
+    for (size_t i = 0; i < num_settings; ++i) {
+        midpoint[i] = clamp01(0.5f * (summary_seed[i] + default_seed[i]));
+    }
+    CandidateResult result;
+    result.settings = summary_seed;
+    result.full_loss = evaluate_settings(summary_seed, time, loss_fn);
+    result.eval_count = 1;
+
+    const auto coarse_start = std::chrono::steady_clock::now();
+    bool first_batch = true;
+    while (first_batch ||
+           std::chrono::duration_cast<std::chrono::duration<float>>(
+               std::chrono::steady_clock::now() - coarse_start)
+                   .count() < time_limit_seconds) {
+        std::vector<std::vector<float>> candidates;
+        candidates.reserve(static_cast<size_t>(candidate_count));
+        candidates.push_back(result.settings);
+        candidates.push_back(summary_seed);
+        candidates.push_back(default_seed);
+        candidates.push_back(midpoint);
+
+        while (static_cast<int>(candidates.size()) < candidate_count) {
+            const size_t mode = candidates.size() % 4;
+            std::vector<float> candidate(num_settings, 0.5f);
+
+            for (size_t i = 0; i < num_settings; ++i) {
+                const float base = (mode == 0) ? result.settings[i]
+                                 : (mode == 1) ? summary_seed[i]
+                                 : (mode == 2) ? midpoint[i]
+                                               : uniform01(rng);
+                float value = base;
+                if (mode == 0) {
+                    value += medium_noise(rng);
+                } else if (mode == 1) {
+                    value += wide_noise(rng);
+                } else if (mode == 2) {
+                    value = coarse_options.summary_default_mix * summary_seed[i] +
+                            (1.0f - coarse_options.summary_default_mix) * default_seed[i] +
+                            wide_noise(rng);
+                } else {
+                    value = coarse_options.exploratory_uniform_mix * uniform01(rng) +
+                            coarse_options.exploratory_summary_mix * summary_seed[i] +
+                            coarse_options.exploratory_default_mix * default_seed[i];
+                }
+                candidate[i] = clamp01(value);
+            }
+
+            candidates.push_back(std::move(candidate));
+        }
+
+        const auto losses = evaluate_settings_batch(candidates, time, loss_fn);
+        result.eval_count += static_cast<int>(losses.size());
+        const auto best_it = std::min_element(losses.begin(), losses.end());
+        if (best_it != losses.end()) {
+            const size_t best_index = static_cast<size_t>(std::distance(losses.begin(), best_it));
+            if (losses[best_index] < result.full_loss) {
+                result.settings = candidates[best_index];
+                result.full_loss = losses[best_index];
+            }
+        }
+        ++result.iterations_completed;
+        if (progress_callback) {
+            progress_callback(TrainingProgress {result.iterations_completed, result.full_loss,
+                                                coarse_sigma, result.eval_count,
+                                                elapsed_seconds_since(coarse_start)});
+        }
+        first_batch = false;
+    }
+
+    return result;
 }
 
 TargetAudioSummary summarize_target_audio(
@@ -783,40 +878,83 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
     return synth(note_settings, time, static_cast<float>(output_sample_rate));
 }
 
-TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,
-                           float initial_sigma, float time_limit, bool verbose,
-                           TrainingProgressCallback progress_callback) {
+TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_audio,
+                                               const CoarseSearchOptions& coarse_options,
+                                               int population_size, float initial_sigma,
+                                               float time_limit, bool verbose,
+                                               TrainingProgressCallback progress_callback) {
+    const auto global_start = std::chrono::steady_clock::now();
     const auto time = make_time_axis(constants::NUM_SECONDS, constants::TRAINING_SAMPLE_RATE);
     LossFunction<float> full_loss_fn(target_audio);
     const auto summary = summarize_target_audio(target_audio, full_loss_fn.features());
-    const auto initial_settings = make_seed_from_summary(summary);
+    const auto summary_seed = make_seed_from_summary(summary);
     const int effective_population =
         population_size > 0 ? population_size : kDefaultCRFMNESPopulationSize;
     const float effective_sigma = std::clamp(initial_sigma, 0.35f, 1.25f);
+    const float coarse_time_budget =
+        time_limit > 0.0f ? std::max(0.35f, time_limit * std::clamp(coarse_options.time_fraction, 0.1f, 0.85f))
+                          : 1.0f;
+
+    auto coarse_result =
+        run_coarse_search(summary_seed, time, full_loss_fn, effective_population, coarse_options,
+                          coarse_time_budget, effective_sigma, progress_callback);
+    const float coarse_elapsed = elapsed_seconds_since(global_start);
+    report_progress(progress_callback, 0, 0, 0.0f, time_limit, coarse_result.full_loss,
+                    TrainingProgress {coarse_result.iterations_completed, coarse_result.full_loss,
+                                      effective_sigma, coarse_result.eval_count, coarse_elapsed});
+
+    const float remaining_time =
+        time_limit > 0.0f ? std::max(0.1f, time_limit - coarse_elapsed) : time_limit;
+    if (time_limit > 0.0f && remaining_time <= 0.15f) {
+        TrainingResult result;
+        result.best_settings = coarse_result.settings;
+        result.best_loss = coarse_result.full_loss;
+        result.iterations_completed = 1;
+        result.final_eval_count = coarse_result.eval_count;
+        result.final_sigma = effective_sigma;
+        return result;
+    }
 
     CRFMNESOptions<float> options;
-    options.initial_settings = initial_settings;
+    options.initial_settings = coarse_result.settings;
 
     auto synth_fn = [](const std::vector<float>& settings, const std::vector<float>& local_time) {
         return synth(settings, local_time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
     };
 
     auto nes_progress = [&](const CRFMNESProgress<float>& progress) {
-        report_progress(progress_callback, 0, 0, 0.0f, time_limit, progress.best_loss, progress);
+        report_progress(progress_callback, coarse_result.iterations_completed,
+                        coarse_result.eval_count, coarse_elapsed, time_limit,
+                        std::min(coarse_result.full_loss, progress.best_loss), progress);
     };
 
     auto result =
         run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, effective_population,
-                                        effective_sigma, time_limit, 10000, verbose,
+                                        effective_sigma, remaining_time, 10000, verbose,
                                         nes_progress, options);
 
     if (result.best_settings.empty()) {
-        result.best_settings = initial_settings;
-        result.best_loss = evaluate_settings(initial_settings, time, full_loss_fn);
-        result.final_eval_count = std::max(result.final_eval_count, 1);
+        result.best_settings = coarse_result.settings;
+        result.best_loss = coarse_result.full_loss;
     }
 
+    if (coarse_result.full_loss < result.best_loss) {
+        result.best_settings = coarse_result.settings;
+        result.best_loss = coarse_result.full_loss;
+    }
+
+    result.iterations_completed += coarse_result.iterations_completed;
+    result.final_eval_count += coarse_result.eval_count;
+
     return result;
+}
+
+TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,
+                           float initial_sigma, float time_limit, bool verbose,
+                           TrainingProgressCallback progress_callback) {
+    return train_synth_with_coarse_options(target_audio, CoarseSearchOptions {}, population_size,
+                                           initial_sigma, time_limit, verbose,
+                                           std::move(progress_callback));
 }
 
 std::string serialize_settings(const std::vector<float>& settings) {

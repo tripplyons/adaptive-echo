@@ -13,6 +13,18 @@ using TrainingResult = CRFMNESResult<float>;
 using TrainingProgress = CRFMNESProgress<float>;
 using TrainingProgressCallback = std::function<void(const TrainingProgress&)>;
 
+struct CoarseSearchOptions {
+    float time_fraction = 0.40f;
+    int candidate_multiplier = 4;
+    int min_candidates = 20;
+    float wide_noise_std = 0.33762205f;
+    float medium_noise_std = 0.18796611f;
+    float summary_default_mix = 0.3803275f;
+    float exploratory_uniform_mix = 0.35553938f;
+    float exploratory_summary_mix = 0.42940134f;
+    float exploratory_default_mix = 0.21505929f;
+};
+
 std::vector<float> default_settings();
 
 std::vector<float> make_time_axis(double duration_seconds, double sample_rate);
@@ -41,6 +53,13 @@ std::vector<float> render_note_audio(const std::vector<float>& settings,
 
 TrainingResult train_synth(
     const std::vector<float>& target_audio,
+    int population_size = kDefaultCRFMNESPopulationSize,
+    float initial_sigma = kDefaultCRFMNESInitialSigma, float time_limit = 60.0f,
+    bool verbose = false,
+    TrainingProgressCallback progress_callback = {});
+
+TrainingResult train_synth_with_coarse_options(
+    const std::vector<float>& target_audio, const CoarseSearchOptions& coarse_options,
     int population_size = kDefaultCRFMNESPopulationSize,
     float initial_sigma = kDefaultCRFMNESInitialSigma, float time_limit = 60.0f,
     bool verbose = false,
