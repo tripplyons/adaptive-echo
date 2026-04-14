@@ -24,7 +24,7 @@
 namespace adaptive_echo {
 
 inline constexpr int kDefaultCRFMNESPopulationSize = 16;
-inline constexpr float kDefaultCRFMNESInitialSigma = 0.1f;
+inline constexpr float kDefaultCRFMNESInitialSigma = 0.2f;
 
 template <typename T>
 struct CRFMNESOptions {
