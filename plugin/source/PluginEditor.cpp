@@ -3,7 +3,6 @@
 namespace {
 const auto kBackground = juce::Colours::white;
 const auto kPanelBackground = juce::Colour::fromRGB(246, 249, 255);
-const auto kPanelOutline = juce::Colour::fromRGB(214, 222, 235);
 const auto kPrimaryText = juce::Colours::black;
 const auto kSecondaryText = juce::Colour::fromRGB(78, 86, 99);
 const auto kAccentBlue = juce::Colour::fromRGB(34, 110, 255);
@@ -13,8 +12,6 @@ const auto kAccentBlueSoft = juce::Colour::fromRGB(228, 238, 255);
 void drawPanel(juce::Graphics& g, juce::Rectangle<float> area) {
     g.setColour(kPanelBackground);
     g.fillRoundedRectangle(area, 18.0f);
-    g.setColour(kPanelOutline);
-    g.drawRoundedRectangle(area.reduced(0.5f), 18.0f, 1.0f);
 }
 
 void drawPanelHeader(juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title,
@@ -22,10 +19,6 @@ void drawPanelHeader(juce::Graphics& g, juce::Rectangle<int> area, const juce::S
     g.setColour(kPrimaryText);
     g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     g.drawText(title, area.removeFromTop(24), juce::Justification::centredLeft, false);
-
-    g.setColour(kSecondaryText);
-    g.setFont(13.0f);
-    g.drawText(subtitle, area.removeFromTop(18), juce::Justification::centredLeft, false);
 }
 }  // namespace
 
@@ -36,7 +29,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
       keyboardComponent(audioProcessor.getKeyboardState(),
                         juce::MidiKeyboardComponent::horizontalKeyboard) {
     setOpaque(true);
-    setSize(1180, 780);
+    setSize(1180, 760);
     setWantsKeyboardFocus(true);
 
     loadSampleButton.addListener(this);
@@ -106,7 +99,7 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     configureEffectSlider(lowPassSlopeSlider, lowPassSlopeLabel, "LP Slope");
     configureEffectSlider(distortionSlider, distortionLabel, "Distortion");
 
-    keyboardLabel.setText("On-Screen MIDI Keyboard", juce::dontSendNotification);
+    keyboardLabel.setText({}, juce::dontSendNotification);
     keyboardLabel.setColour(juce::Label::textColourId, kPrimaryText);
     keyboardLabel.setFont(juce::FontOptions(15.0f, juce::Font::bold));
     addAndMakeVisible(keyboardLabel);
@@ -181,16 +174,16 @@ AdaptiveEchoAudioProcessorEditor::~AdaptiveEchoAudioProcessorEditor() {
 void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(kBackground);
 
-    auto bounds = getLocalBounds().reduced(22);
-    auto hero = bounds.removeFromTop(72);
-    auto trainingArea = bounds.removeFromTop(236);
-    bounds.removeFromTop(16);
-    auto controlsArea = bounds.removeFromTop(250);
-    bounds.removeFromTop(16);
+    auto bounds = getLocalBounds().reduced(20);
+    auto hero = bounds.removeFromTop(58);
+    auto trainingArea = bounds.removeFromTop(214);
+    bounds.removeFromTop(10);
+    auto controlsArea = bounds.removeFromTop(252);
+    bounds.removeFromTop(10);
     auto keyboardArea = bounds;
 
-    auto leftControls = controlsArea.removeFromLeft((controlsArea.getWidth() - 16) / 2);
-    controlsArea.removeFromLeft(16);
+    auto leftControls = controlsArea.removeFromLeft((controlsArea.getWidth() - 12) / 2);
+    controlsArea.removeFromLeft(12);
     auto rightControls = controlsArea;
 
     drawPanel(g, trainingArea.toFloat());
@@ -200,33 +193,29 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
 
     g.setColour(kPrimaryText);
     g.setFont(juce::Font(juce::FontOptions(34.0f, juce::Font::bold)));
-    g.drawText("Adaptive Echo", hero.removeFromTop(40), juce::Justification::centredLeft, false);
+    g.drawText("Adaptive Echo", hero.removeFromTop(38), juce::Justification::centredLeft, false);
 
-    drawPanelHeader(g, trainingArea.reduced(22).removeFromTop(42), "Training",
-                    "Load a sample, fit the synth, and keep the current loss and progress visible.");
-    drawPanelHeader(g, leftControls.reduced(22).removeFromTop(42), "Source Controls",
-                    "Reference pitch and pre-filter shaping.");
-    drawPanelHeader(g, rightControls.reduced(22).removeFromTop(42), "Output Controls",
-                    "Final tonal shaping and distortion.");
-    drawPanelHeader(g, keyboardArea.reduced(22).removeFromTop(42), "Keyboard",
-                    "Large performance area for auditioning the trained patch.");
+    drawPanelHeader(g, trainingArea.reduced(20).removeFromTop(24), "Training", {});
+    drawPanelHeader(g, leftControls.reduced(20).removeFromTop(24), "Source Controls", {});
+    drawPanelHeader(g, rightControls.reduced(20).removeFromTop(24), "Output Controls", {});
+    drawPanelHeader(g, keyboardArea.reduced(20).removeFromTop(24), "Keyboard", {});
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
-    auto bounds = getLocalBounds().reduced(22);
-    bounds.removeFromTop(72);
+    auto bounds = getLocalBounds().reduced(20);
+    bounds.removeFromTop(58);
 
-    auto trainingArea = bounds.removeFromTop(236).reduced(22);
-    bounds.removeFromTop(16);
-    auto controlsArea = bounds.removeFromTop(250);
-    bounds.removeFromTop(16);
-    auto keyboardArea = bounds.reduced(22);
+    auto trainingArea = bounds.removeFromTop(214).reduced(20);
+    bounds.removeFromTop(10);
+    auto controlsArea = bounds.removeFromTop(252);
+    bounds.removeFromTop(10);
+    auto keyboardArea = bounds.reduced(20);
 
-    auto leftControls = controlsArea.removeFromLeft((controlsArea.getWidth() - 16) / 2).reduced(22);
-    controlsArea.removeFromLeft(16);
-    auto rightControls = controlsArea.reduced(22);
+    auto leftControls = controlsArea.removeFromLeft((controlsArea.getWidth() - 12) / 2).reduced(20);
+    controlsArea.removeFromLeft(12);
+    auto rightControls = controlsArea.reduced(20);
 
-    trainingArea.removeFromTop(54);
+    trainingArea.removeFromTop(26);
 
     auto actionRow = trainingArea.removeFromTop(40);
     auto actionButtons = actionRow.removeFromRight(310);
@@ -234,22 +223,22 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     actionButtons.removeFromLeft(14);
     trainButton.setBounds(actionButtons.removeFromLeft(148));
 
-    trainingArea.removeFromTop(12);
-    samplePathLabel.setBounds(trainingArea.removeFromTop(30));
-    trainingArea.removeFromTop(10);
-    statusLabel.setBounds(trainingArea.removeFromTop(26));
     trainingArea.removeFromTop(8);
-    trainingProgressLabel.setBounds(trainingArea.removeFromTop(22));
+    samplePathLabel.setBounds(trainingArea.removeFromTop(28));
+    trainingArea.removeFromTop(8);
+    statusLabel.setBounds(trainingArea.removeFromTop(24));
+    trainingArea.removeFromTop(6);
+    trainingProgressLabel.setBounds(trainingArea.removeFromTop(20));
+    trainingArea.removeFromTop(8);
+    trainingProgressBar.setBounds(trainingArea.removeFromTop(24));
     trainingArea.removeFromTop(10);
-    trainingProgressBar.setBounds(trainingArea.removeFromTop(28));
-    trainingArea.removeFromTop(14);
     auto toggleRow = trainingArea.removeFromTop(28);
     oscAPitchTrackToggle.setBounds(toggleRow.removeFromLeft(190));
-    toggleRow.removeFromLeft(18);
+    toggleRow.removeFromLeft(14);
     oscBPitchTrackToggle.setBounds(toggleRow.removeFromLeft(190));
 
-    leftControls.removeFromTop(54);
-    rightControls.removeFromTop(54);
+    leftControls.removeFromTop(26);
+    rightControls.removeFromTop(26);
 
     auto layoutKnob = [](juce::Rectangle<int> area, juce::Label& label, juce::Slider& slider) {
         label.setBounds(area.removeFromTop(22));
@@ -257,7 +246,7 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
         slider.setBounds(area);
     };
 
-    auto rowGap = 16;
+    auto rowGap = 12;
     auto layoutRow = [layoutKnob, rowGap](juce::Rectangle<int> row,
                                           std::initializer_list<std::pair<juce::Label*, juce::Slider*>>
                                               controls) mutable {
@@ -270,32 +259,31 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
         }
     };
 
-    auto leftTop = leftControls.removeFromTop(112);
-    auto leftBottom = leftControls.removeFromTop(112);
+    auto leftTop = leftControls.removeFromTop(102);
+    auto leftBottom = leftControls.removeFromTop(110);
     layoutRow(leftTop,
               {{&frequencyLabel, &referenceFrequencySlider},
                {&preHighPassCutoffLabel, &preHighPassCutoffSlider},
                {&preHighPassSlopeLabel, &preHighPassSlopeSlider}});
-    leftControls.removeFromTop(12);
+    leftControls.removeFromTop(8);
     layoutRow(leftBottom,
               {{&preLowPassCutoffLabel, &preLowPassCutoffSlider},
                {&preLowPassSlopeLabel, &preLowPassSlopeSlider}});
 
-    auto rightTop = rightControls.removeFromTop(112);
-    auto rightBottom = rightControls.removeFromTop(112);
+    auto rightTop = rightControls.removeFromTop(102);
+    auto rightBottom = rightControls.removeFromTop(110);
     layoutRow(rightTop,
               {{&highPassCutoffLabel, &highPassCutoffSlider},
                {&highPassSlopeLabel, &highPassSlopeSlider},
                {&lowPassCutoffLabel, &lowPassCutoffSlider}});
-    rightControls.removeFromTop(12);
+    rightControls.removeFromTop(8);
     layoutRow(rightBottom,
               {{&lowPassSlopeLabel, &lowPassSlopeSlider},
                {&distortionLabel, &distortionSlider}});
 
-    keyboardArea.removeFromTop(54);
+    keyboardArea.removeFromTop(26);
     keyboardLabel.setBounds(keyboardArea.removeFromTop(24));
-    keyboardArea.removeFromTop(12);
-    keyboardComponent.setBounds(keyboardArea.removeFromTop(186));
+    keyboardComponent.setBounds(keyboardArea.removeFromTop(222));
 }
 
 void AdaptiveEchoAudioProcessorEditor::buttonClicked(juce::Button* button) {
