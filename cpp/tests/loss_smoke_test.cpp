@@ -81,6 +81,24 @@ bool any_difference(const std::vector<float>& lhs, const std::vector<float>& rhs
     return false;
 }
 
+template <typename T>
+bool same_feature_signature(const adaptive_echo::RandomLossWindow<T>& lhs,
+                            const adaptive_echo::RandomLossWindow<T>& rhs) {
+    if (lhs.features.size() != rhs.features.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.features.size(); ++i) {
+        const auto& lhs_feature = lhs.features[i];
+        const auto& rhs_feature = rhs.features[i];
+        if (lhs_feature.family != rhs_feature.family ||
+            lhs_feature.coefficient != rhs_feature.coefficient ||
+            lhs_feature.band_count != rhs_feature.band_count) {
+            return false;
+        }
+    }
+    return true;
+}
+
 int require(bool condition, const std::string& message) {
     if (!condition) {
         std::cerr << "loss_smoke_test failed: " << message << '\n';
@@ -111,6 +129,19 @@ int main() {
     const auto next_losses = seeded_a.compute_batch(batch);
     if (const int rc = require(any_difference(losses_a, next_losses),
                                "successive batch evaluations should use new schedules")) {
+        return rc;
+    }
+
+    const auto schedule = adaptive_echo::detail::make_random_loss_schedule(target, 1337);
+    bool found_distinct_window_features = false;
+    for (size_t i = 1; i < schedule.windows.size(); ++i) {
+        if (!same_feature_signature(schedule.windows.front(), schedule.windows[i])) {
+            found_distinct_window_features = true;
+            break;
+        }
+    }
+    if (const int rc = require(found_distinct_window_features,
+                               "different windows should sample different cepstral feature sets")) {
         return rc;
     }
 

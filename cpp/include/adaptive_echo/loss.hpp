@@ -442,6 +442,49 @@ inline T compute_weighted_cepstral_coefficient(const std::vector<T>& spectrum,
 }
 
 template <typename T>
+inline T compute_weighted_log_magnitude_loss(const std::vector<T>& generated_spectrum,
+                                             const std::vector<T>& target_spectrum,
+                                             const std::vector<T>& frequency_weights) {
+    if (generated_spectrum.empty() || generated_spectrum.size() != target_spectrum.size() ||
+        generated_spectrum.size() != frequency_weights.size()) {
+        return static_cast<T>(0);
+    }
+
+    constexpr T epsilon = static_cast<T>(1e-8);
+    T loss = static_cast<T>(0);
+    for (size_t bin = 0; bin < generated_spectrum.size(); ++bin) {
+        const T generated_log = std::log(generated_spectrum[bin] + epsilon);
+        const T target_log = std::log(target_spectrum[bin] + epsilon);
+        loss += frequency_weights[bin] * std::abs(generated_log - target_log);
+    }
+
+    return loss / static_cast<T>(generated_spectrum.size());
+}
+
+template <typename T>
+inline T compute_centered_log_structure_scale(const std::vector<T>& spectrum,
+                                              const std::vector<T>& frequency_weights) {
+    if (spectrum.empty() || spectrum.size() != frequency_weights.size()) {
+        return static_cast<T>(0);
+    }
+
+    constexpr T epsilon = static_cast<T>(1e-8);
+    std::vector<T> log_spectrum(spectrum.size(), static_cast<T>(0));
+    T mean_log = static_cast<T>(0);
+    for (size_t bin = 0; bin < spectrum.size(); ++bin) {
+        log_spectrum[bin] = std::log(spectrum[bin] + epsilon);
+        mean_log += log_spectrum[bin];
+    }
+    mean_log /= static_cast<T>(spectrum.size());
+
+    T scale = static_cast<T>(0);
+    for (size_t bin = 0; bin < spectrum.size(); ++bin) {
+        scale += frequency_weights[bin] * std::abs(log_spectrum[bin] - mean_log);
+    }
+    return scale / static_cast<T>(spectrum.size());
+}
+
+template <typename T>
 inline RandomWindowType sample_window_type(std::mt19937_64& rng) {
     std::uniform_int_distribution<int> distribution(0, 5);
     return static_cast<RandomWindowType>(distribution(rng));
@@ -551,6 +594,7 @@ struct PreparedWindowContext {
     std::vector<T> frequency_weights;
     std::vector<T> target_spectrum;
     std::vector<T> full_cepstral_weights;
+    T spectral_normalization = static_cast<T>(1);
     std::vector<PreparedBandContext<T>> band_contexts;
     std::vector<PreparedFeature<T>> features;
 };
@@ -595,6 +639,7 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
     context.full_cepstral_weights =
         perceptual_cepstral_weights(context.frequency_weights, full_coeff_count);
     context.features.reserve(loss_window.features.size());
+    T cepstral_reference = static_cast<T>(0);
 
     for (const auto& feature_spec : loss_window.features) {
         PreparedFeature<T> feature;
@@ -625,7 +670,19 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
                 band_context->target_band_spectrum, band_context->band_weights, coeff_index);
         }
 
+        cepstral_reference += feature.weight * std::abs(feature.target_value);
         context.features.push_back(feature);
+    }
+
+    const T mean_cepstral_reference =
+        context.features.empty()
+            ? static_cast<T>(0)
+            : cepstral_reference / static_cast<T>(context.features.size());
+    const T spectral_reference =
+        compute_centered_log_structure_scale(context.target_spectrum, context.frequency_weights);
+    constexpr T epsilon = static_cast<T>(1e-8);
+    if (spectral_reference > epsilon && mean_cepstral_reference > epsilon) {
+        context.spectral_normalization = spectral_reference / mean_cepstral_reference;
     }
 
     return context;
@@ -649,10 +706,16 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
         return static_cast<T>(0);
     }
 
-    T total_loss = static_cast<T>(0);
-    size_t total_terms = 0;
+    T cepstral_loss = static_cast<T>(0);
+    T spectral_loss = static_cast<T>(0);
+    size_t total_cepstral_terms = 0;
+    size_t total_spectral_terms = 0;
     for (const auto& context : contexts) {
         const auto spectrum = compute_windowed_magnitude_spectrum(generated, context.window);
+        spectral_loss += compute_weighted_log_magnitude_loss(
+            spectrum, context.target_spectrum, context.frequency_weights) /
+                         context.spectral_normalization;
+        ++total_spectral_terms;
         std::vector<std::pair<size_t, std::vector<T>>> generated_band_cache;
         generated_band_cache.reserve(context.band_contexts.size());
 
@@ -699,12 +762,19 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
                     cache_it->second, band_context->band_weights, feature.coefficient);
             }
 
-            total_loss += feature.weight * std::abs(generated_value - feature.target_value);
-            ++total_terms;
+            cepstral_loss += feature.weight * std::abs(generated_value - feature.target_value);
+            ++total_cepstral_terms;
         }
     }
 
-    return total_terms > 0 ? total_loss / static_cast<T>(total_terms) : static_cast<T>(0);
+    const T mean_cepstral_loss =
+        total_cepstral_terms > 0 ? cepstral_loss / static_cast<T>(total_cepstral_terms)
+                                 : static_cast<T>(0);
+    const T mean_spectral_loss =
+        total_spectral_terms > 0 ? spectral_loss / static_cast<T>(total_spectral_terms)
+                                 : static_cast<T>(0);
+    return static_cast<T>(0.5) * mean_cepstral_loss +
+           static_cast<T>(0.5) * mean_spectral_loss;
 }
 
 template <typename T>
