@@ -433,6 +433,74 @@ inline T log_magnitude_loss(const std::vector<T>& x_mag, const std::vector<T>& y
 }
 
 template <typename T>
+inline std::vector<T> center_log_spectrogram(const std::vector<T>& spec, size_t num_features) {
+    if (spec.empty() || num_features == 0) {
+        return {};
+    }
+
+    constexpr T epsilon = static_cast<T>(1e-8);
+    const size_t num_frames = spec.size() / num_features;
+    std::vector<T> centered(spec.size(), static_cast<T>(0));
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* src_ptr = &spec[frame * num_features];
+        T* dst_ptr = &centered[frame * num_features];
+        T mean = static_cast<T>(0);
+        for (size_t feature = 0; feature < num_features; ++feature) {
+            dst_ptr[feature] = std::log(src_ptr[feature] + epsilon);
+            mean += dst_ptr[feature];
+        }
+        mean /= static_cast<T>(num_features);
+#if defined(HAS_OPENMP)
+#pragma omp simd
+#endif
+        for (size_t feature = 0; feature < num_features; ++feature) {
+            dst_ptr[feature] -= mean;
+        }
+    }
+
+    return centered;
+}
+
+template <typename T>
+inline std::vector<T> log_spectral_delta(const std::vector<T>& spec, size_t num_features) {
+    if (spec.empty() || num_features < 2) {
+        return {};
+    }
+
+    constexpr T epsilon = static_cast<T>(1e-8);
+    const size_t num_frames = spec.size() / num_features;
+    std::vector<T> deltas(num_frames * (num_features - 1), static_cast<T>(0));
+
+    for (size_t frame = 0; frame < num_frames; ++frame) {
+        const T* src_ptr = &spec[frame * num_features];
+        T* dst_ptr = &deltas[frame * (num_features - 1)];
+#if defined(HAS_OPENMP)
+#pragma omp simd
+#endif
+        for (size_t feature = 1; feature < num_features; ++feature) {
+            dst_ptr[feature - 1] =
+                std::log(src_ptr[feature] + epsilon) - std::log(src_ptr[feature - 1] + epsilon);
+        }
+    }
+
+    return deltas;
+}
+
+template <typename T>
+inline std::vector<T> adjacent_feature_weights(const std::vector<T>& weights) {
+    if (weights.size() < 2) {
+        return {};
+    }
+
+    std::vector<T> adjacent(weights.size() - 1, static_cast<T>(0));
+    for (size_t i = 1; i < weights.size(); ++i) {
+        adjacent[i - 1] = static_cast<T>(0.5) * (weights[i - 1] + weights[i]);
+    }
+    return adjacent;
+}
+
+template <typename T>
 inline T weighted_l1_loss(const std::vector<T>& x, const std::vector<T>& y,
                           const std::vector<T>& weights, size_t num_features) {
     const size_t n = x.size();
@@ -814,6 +882,9 @@ struct TargetFeaturesFast {
     std::vector<std::vector<T>> fine_cepstra;
     std::vector<std::vector<T>> fine_cepstral_weights;
     std::vector<size_t> num_fine_cepstra;
+    std::vector<std::vector<T>> fine_centered_logs;
+    std::vector<std::vector<T>> fine_log_deltas;
+    std::vector<std::vector<T>> fine_delta_weights;
 
     // Coarse-grained band trajectories and cepstra at each scale
     std::vector<std::vector<T>> band_stfts;
@@ -823,6 +894,9 @@ struct TargetFeaturesFast {
     std::vector<std::vector<T>> cepstra;
     std::vector<std::vector<T>> cepstral_weights;
     std::vector<size_t> num_cepstra;
+    std::vector<std::vector<T>> band_centered_logs;
+    std::vector<std::vector<T>> band_log_deltas;
+    std::vector<std::vector<T>> band_delta_weights;
 
     // Global envelope-shape features, normalized to focus on contour.
     std::vector<T> envelope;
@@ -840,7 +914,7 @@ struct TargetFeaturesFast {
  */
 template <typename T>
 inline TargetFeaturesFast<T> precompute_target_features_fast(
-    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {2048, 1024, 512}) {
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512}) {
     TargetFeaturesFast<T> features;
     const size_t num_scales = fft_sizes.size();
 
@@ -853,6 +927,9 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     features.fine_cepstra.resize(num_scales);
     features.fine_cepstral_weights.resize(num_scales);
     features.num_fine_cepstra.resize(num_scales);
+    features.fine_centered_logs.resize(num_scales);
+    features.fine_log_deltas.resize(num_scales);
+    features.fine_delta_weights.resize(num_scales);
     features.band_stfts.resize(num_scales);
     features.band_edges.resize(num_scales);
     features.band_weights.resize(num_scales);
@@ -860,6 +937,9 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
     features.cepstra.resize(num_scales);
     features.cepstral_weights.resize(num_scales);
     features.num_cepstra.resize(num_scales);
+    features.band_centered_logs.resize(num_scales);
+    features.band_log_deltas.resize(num_scales);
+    features.band_delta_weights.resize(num_scales);
     features.band_centroids.resize(num_scales);
     features.band_flux.resize(num_scales);
     features.envelope = detail::compute_envelope(target);
@@ -889,6 +969,12 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
             features.fine_cepstra[scale] = detail::weighted_cepstrum_spectrogram(
                 features.stfts[scale], features.num_freqs[scale], features.fine_weights[scale],
                 features.num_fine_cepstra[scale]);
+            features.fine_centered_logs[scale] = detail::center_log_spectrogram(
+                features.stfts[scale], features.num_freqs[scale]);
+            features.fine_log_deltas[scale] = detail::log_spectral_delta(
+                features.stfts[scale], features.num_freqs[scale]);
+            features.fine_delta_weights[scale] =
+                detail::adjacent_feature_weights(features.fine_weights[scale]);
             const size_t band_count = std::min<size_t>(16, std::max<size_t>(8, n_fft / 128));
             features.band_edges[scale] =
                 detail::compute_log_band_edges<T>(features.num_freqs[scale], band_count);
@@ -901,6 +987,12 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
             features.num_cepstra[scale] = std::min<size_t>(8, features.num_bands[scale]);
             features.cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
                 features.band_weights[scale], features.num_cepstra[scale]);
+            features.band_centered_logs[scale] = detail::center_log_spectrogram(
+                features.band_stfts[scale], features.num_bands[scale]);
+            features.band_log_deltas[scale] = detail::log_spectral_delta(
+                features.band_stfts[scale], features.num_bands[scale]);
+            features.band_delta_weights[scale] =
+                detail::adjacent_feature_weights(features.band_weights[scale]);
             features.band_centroids[scale] = detail::compute_band_centroid_trajectory(
                 features.band_stfts[scale], features.num_bands[scale]);
             features.band_flux[scale] = detail::compute_spectral_flux_trajectory(
@@ -924,6 +1016,10 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
                                  const TargetFeaturesFast<T>& target_features) {
     T fine_spectral_loss = static_cast<T>(0);
     T coarse_spectral_loss = static_cast<T>(0);
+    T fine_centered_loss = static_cast<T>(0);
+    T coarse_centered_loss = static_cast<T>(0);
+    T fine_delta_loss = static_cast<T>(0);
+    T coarse_delta_loss = static_cast<T>(0);
     T fine_cepstral_loss = static_cast<T>(0);
     T coarse_cepstral_loss = static_cast<T>(0);
     T envelope_loss = static_cast<T>(0);
@@ -955,6 +1051,21 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
         fine_spectral_loss += detail::log_magnitude_loss(x_stft, y_stft,
                                                          target_features.fine_weights[scale],
                                                          num_freqs);
+        const auto x_fine_centered =
+            detail::center_log_spectrogram(x_stft, num_freqs);
+        if (!x_fine_centered.empty() &&
+            x_fine_centered.size() == target_features.fine_centered_logs[scale].size()) {
+            fine_centered_loss += detail::weighted_l1_loss(
+                x_fine_centered, target_features.fine_centered_logs[scale],
+                target_features.fine_weights[scale], num_freqs);
+        }
+        const auto x_fine_delta = detail::log_spectral_delta(x_stft, num_freqs);
+        if (!x_fine_delta.empty() &&
+            x_fine_delta.size() == target_features.fine_log_deltas[scale].size()) {
+            fine_delta_loss += detail::weighted_l1_loss(
+                x_fine_delta, target_features.fine_log_deltas[scale],
+                target_features.fine_delta_weights[scale], num_freqs - 1);
+        }
 
         const auto x_fine_cepstra = detail::weighted_cepstrum_spectrogram(
             x_stft, num_freqs, target_features.fine_weights[scale],
@@ -974,6 +1085,23 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
             coarse_spectral_loss += detail::log_magnitude_loss(
                 x_band_stft, target_features.band_stfts[scale],
                 target_features.band_weights[scale], target_features.num_bands[scale]);
+            const auto x_band_centered = detail::center_log_spectrogram(
+                x_band_stft, target_features.num_bands[scale]);
+            if (!x_band_centered.empty() &&
+                x_band_centered.size() == target_features.band_centered_logs[scale].size()) {
+                coarse_centered_loss += detail::weighted_l1_loss(
+                    x_band_centered, target_features.band_centered_logs[scale],
+                    target_features.band_weights[scale], target_features.num_bands[scale]);
+            }
+            const auto x_band_delta = detail::log_spectral_delta(
+                x_band_stft, target_features.num_bands[scale]);
+            if (!x_band_delta.empty() &&
+                x_band_delta.size() == target_features.band_log_deltas[scale].size()) {
+                coarse_delta_loss += detail::weighted_l1_loss(
+                    x_band_delta, target_features.band_log_deltas[scale],
+                    target_features.band_delta_weights[scale],
+                    target_features.num_bands[scale] - 1);
+            }
             const auto x_band_centroids = detail::compute_band_centroid_trajectory(
                 x_band_stft, target_features.num_bands[scale]);
             if (!x_band_centroids.empty() &&
@@ -1006,6 +1134,10 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
 
     fine_spectral_loss /= static_cast<T>(active_scales);
     coarse_spectral_loss /= static_cast<T>(active_scales);
+    fine_centered_loss /= static_cast<T>(active_scales);
+    coarse_centered_loss /= static_cast<T>(active_scales);
+    fine_delta_loss /= static_cast<T>(active_scales);
+    coarse_delta_loss /= static_cast<T>(active_scales);
     fine_cepstral_loss /= static_cast<T>(active_scales);
     coarse_cepstral_loss /= static_cast<T>(active_scales);
     centroid_loss /= static_cast<T>(active_scales);
@@ -1024,16 +1156,20 @@ inline T compute_audio_loss_fast(const std::vector<T>& generated,
                                          target_features.zcr_delta);
     }
 
-    const T spectral_loss = static_cast<T>(0.36) * fine_spectral_loss +
-                            static_cast<T>(0.18) * coarse_spectral_loss +
-                            static_cast<T>(0.18) * fine_cepstral_loss +
-                            static_cast<T>(0.08) * coarse_cepstral_loss;
-    const T shape_loss = static_cast<T>(0.02) * envelope_loss +
-                         static_cast<T>(0.01) * envelope_delta_loss +
-                         static_cast<T>(0.01) * zcr_loss +
-                         static_cast<T>(0.006) * zcr_delta_loss +
-                         static_cast<T>(0.02) * centroid_loss +
-                         static_cast<T>(0.02) * flux_loss;
+    const T spectral_loss = static_cast<T>(0.20) * fine_spectral_loss +
+                            static_cast<T>(0.10) * coarse_spectral_loss +
+                            static_cast<T>(0.14) * fine_centered_loss +
+                            static_cast<T>(0.10) * coarse_centered_loss +
+                            static_cast<T>(0.10) * fine_delta_loss +
+                            static_cast<T>(0.08) * coarse_delta_loss +
+                            static_cast<T>(0.22) * fine_cepstral_loss +
+                            static_cast<T>(0.12) * coarse_cepstral_loss;
+    const T shape_loss = static_cast<T>(0.012) * envelope_loss +
+                         static_cast<T>(0.006) * envelope_delta_loss +
+                         static_cast<T>(0.004) * zcr_loss +
+                         static_cast<T>(0.002) * zcr_delta_loss +
+                         static_cast<T>(0.010) * centroid_loss +
+                         static_cast<T>(0.014) * flux_loss;
     return spectral_loss + shape_loss;
 }
 
@@ -1069,7 +1205,7 @@ template <typename T>
 class LossFunction {
    public:
     LossFunction(const std::vector<T>& target,
-                 const std::vector<size_t>& fft_sizes = {2048, 1024, 512})
+                 const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512})
         : target_(target), fft_sizes_(fft_sizes) {
         features_ = precompute_target_features_fast(target, fft_sizes);
     }

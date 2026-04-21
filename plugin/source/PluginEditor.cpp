@@ -14,8 +14,7 @@ void drawPanel(juce::Graphics& g, juce::Rectangle<float> area) {
     g.fillRoundedRectangle(area, 18.0f);
 }
 
-void drawPanelHeader(juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title,
-                     const juce::String& subtitle) {
+void drawPanelHeader(juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title) {
     g.setColour(kPrimaryText);
     g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     g.drawText(title, area.removeFromTop(24), juce::Justification::centredLeft, false);
@@ -178,7 +177,7 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
     auto hero = bounds.removeFromTop(58);
     auto trainingArea = bounds.removeFromTop(214);
     bounds.removeFromTop(10);
-    auto controlsArea = bounds.removeFromTop(252);
+    auto controlsArea = bounds.removeFromTop(170);
     bounds.removeFromTop(10);
     auto keyboardArea = bounds;
 
@@ -195,10 +194,10 @@ void AdaptiveEchoAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setFont(juce::Font(juce::FontOptions(34.0f, juce::Font::bold)));
     g.drawText("Adaptive Echo", hero.removeFromTop(38), juce::Justification::centredLeft, false);
 
-    drawPanelHeader(g, trainingArea.reduced(20).removeFromTop(24), "Training", {});
-    drawPanelHeader(g, leftControls.reduced(20).removeFromTop(24), "Source Controls", {});
-    drawPanelHeader(g, rightControls.reduced(20).removeFromTop(24), "Output Controls", {});
-    drawPanelHeader(g, keyboardArea.reduced(20).removeFromTop(24), "Keyboard", {});
+    drawPanelHeader(g, trainingArea.reduced(20).removeFromTop(24), "Training");
+    drawPanelHeader(g, leftControls.reduced(20).removeFromTop(24), "Source Controls");
+    drawPanelHeader(g, rightControls.reduced(20).removeFromTop(24), "Output Controls");
+    drawPanelHeader(g, keyboardArea.reduced(20).removeFromTop(24), "Keyboard");
 }
 
 void AdaptiveEchoAudioProcessorEditor::resized() {
@@ -207,7 +206,7 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
 
     auto trainingArea = bounds.removeFromTop(214).reduced(20);
     bounds.removeFromTop(10);
-    auto controlsArea = bounds.removeFromTop(252);
+    auto controlsArea = bounds.removeFromTop(170);
     bounds.removeFromTop(10);
     auto keyboardArea = bounds.reduced(20);
 
@@ -259,26 +258,20 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
         }
     };
 
-    auto leftTop = leftControls.removeFromTop(102);
-    auto leftBottom = leftControls.removeFromTop(110);
-    layoutRow(leftTop,
+    auto leftRow = leftControls.removeFromTop(116);
+    layoutRow(leftRow,
               {{&frequencyLabel, &referenceFrequencySlider},
                {&preHighPassCutoffLabel, &preHighPassCutoffSlider},
-               {&preHighPassSlopeLabel, &preHighPassSlopeSlider}});
-    leftControls.removeFromTop(8);
-    layoutRow(leftBottom,
-              {{&preLowPassCutoffLabel, &preLowPassCutoffSlider},
+               {&preHighPassSlopeLabel, &preHighPassSlopeSlider},
+               {&preLowPassCutoffLabel, &preLowPassCutoffSlider},
                {&preLowPassSlopeLabel, &preLowPassSlopeSlider}});
 
-    auto rightTop = rightControls.removeFromTop(102);
-    auto rightBottom = rightControls.removeFromTop(110);
-    layoutRow(rightTop,
+    auto rightRow = rightControls.removeFromTop(116);
+    layoutRow(rightRow,
               {{&highPassCutoffLabel, &highPassCutoffSlider},
                {&highPassSlopeLabel, &highPassSlopeSlider},
-               {&lowPassCutoffLabel, &lowPassCutoffSlider}});
-    rightControls.removeFromTop(8);
-    layoutRow(rightBottom,
-              {{&lowPassSlopeLabel, &lowPassSlopeSlider},
+               {&lowPassCutoffLabel, &lowPassCutoffSlider},
+               {&lowPassSlopeLabel, &lowPassSlopeSlider},
                {&distortionLabel, &distortionSlider}});
 
     keyboardArea.removeFromTop(26);
