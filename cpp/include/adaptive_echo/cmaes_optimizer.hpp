@@ -24,7 +24,7 @@
 
 namespace adaptive_echo {
 
-inline constexpr int kDefaultCRFMNESPopulationSize = 64;
+inline constexpr int kDefaultCRFMNESPopulationSize = 32;
 inline constexpr float kDefaultCRFMNESInitialSigma = 1.0f;
 
 template <typename T>
@@ -229,8 +229,6 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
         ++lambda;
     }
 
-    initial_sigma = std::max(initial_sigma, static_cast<T>(1e-6));
-
     std::vector<T> mean(dim, static_cast<T>(0));
     if (!options.initial_settings.empty()) {
         for (int i = 0; i < dim; ++i) {
@@ -316,8 +314,6 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
     const T eta_m = static_cast<T>(1);
     const T eta_move_sigma = static_cast<T>(1);
     const T min_d = static_cast<T>(1e-12);
-    const T min_sigma = static_cast<T>(1e-8);
-    const T max_sigma = static_cast<T>(20);
     const T epsilon = static_cast<T>(1e-12);
 
     std::normal_distribution<T> standard_normal(static_cast<T>(0), static_cast<T>(1));
@@ -593,7 +589,6 @@ inline CRFMNESResult<T> run_crfmnes_optimization(
         }
         g_sigma /= static_cast<T>(dim);
         sigma *= std::exp(eta_sigma * static_cast<T>(0.5) * g_sigma);
-        sigma = std::clamp(sigma, min_sigma, max_sigma);
 
         result.iterations_completed = generation + 1;
 
