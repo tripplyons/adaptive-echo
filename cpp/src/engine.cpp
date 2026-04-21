@@ -31,6 +31,7 @@ constexpr float kMinEnvelopeReleaseSeconds = 0.05f;
 constexpr float kMaxEnvelopeReleaseSeconds = 0.5f;
 constexpr float kMinFilterCutoffHz = 20.0f;
 constexpr float kMaxFilterCutoffHz = 20000.0f;
+constexpr int kRefinementPopulationSize = 16;
 
 struct TargetAudioSummary {
     float dominant_frequency_hz = 440.0f;
@@ -896,15 +897,16 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
     LossFunction<float> full_loss_fn(target_audio, make_loss_seed(loss_seed));
     const auto summary = summarize_target_audio(target_audio, full_loss_fn.features());
     const auto summary_seed = make_seed_from_summary(summary);
-    const int effective_population =
+    const int coarse_population =
         population_size > 0 ? population_size : kDefaultCRFMNESPopulationSize;
+    const int refinement_population = kRefinementPopulationSize;
     const float effective_sigma = initial_sigma;
     const float coarse_time_budget =
         time_limit > 0.0f ? std::max(0.35f, time_limit * std::clamp(coarse_options.time_fraction, 0.1f, 0.85f))
                           : 1.0f;
 
     auto coarse_result =
-        run_coarse_search(summary_seed, time, full_loss_fn, effective_population, coarse_options,
+        run_coarse_search(summary_seed, time, full_loss_fn, coarse_population, coarse_options,
                           coarse_time_budget, effective_sigma, progress_callback);
     const float coarse_elapsed = elapsed_seconds_since(global_start);
     report_progress(progress_callback, 0, 0, 0.0f, time_limit, coarse_result.full_loss,
@@ -937,7 +939,7 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
     };
 
     auto result =
-        run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, effective_population,
+        run_crfmnes_optimization<float>(full_loss_fn, time, synth_fn, refinement_population,
                                         effective_sigma, remaining_time, 10000, verbose,
                                         nes_progress, options);
 

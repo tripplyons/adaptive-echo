@@ -76,7 +76,7 @@ inline constexpr size_t kRandomFeaturesPerWindow = 32;
 inline constexpr size_t kFullSpectrumCoeffLimit = 64;
 inline constexpr size_t kSpectralGroupCount16 = 16;
 inline constexpr size_t kSpectralGroupCount4 = 4;
-inline constexpr std::array<size_t, 4> kFftCandidates = {256, 512, 1024, 2048};
+inline constexpr std::array<size_t, 6> kFftCandidates = {256, 512, 1024, 2048, 4096, 8192};
 
 template <typename T>
 inline T clamp_epsilon(T value, T epsilon = static_cast<T>(1e-8)) {

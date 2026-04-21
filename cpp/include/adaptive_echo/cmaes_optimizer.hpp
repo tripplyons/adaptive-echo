@@ -24,7 +24,7 @@
 
 namespace adaptive_echo {
 
-inline constexpr int kDefaultCRFMNESPopulationSize = 32;
+inline constexpr int kDefaultCRFMNESPopulationSize = 256;
 inline constexpr float kDefaultCRFMNESInitialSigma = 1.0f;
 
 template <typename T>
