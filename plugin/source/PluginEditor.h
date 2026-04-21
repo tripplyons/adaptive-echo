@@ -1,8 +1,8 @@
 #pragma once
 
-#include <memory>
-
 #include <juce_gui_extra/juce_gui_extra.h>
+
+#include <memory>
 
 #include "PluginProcessor.h"
 
@@ -10,20 +10,21 @@ class AdaptiveEchoAudioProcessorEditor final : public juce::AudioProcessorEditor
                                                private juce::Button::Listener,
                                                private juce::ChangeListener,
                                                private juce::Timer {
-public:
+   public:
     explicit AdaptiveEchoAudioProcessorEditor(AdaptiveEchoAudioProcessor&);
     ~AdaptiveEchoAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
-private:
+   private:
     AdaptiveEchoAudioProcessor& audioProcessor;
-    juce::TextButton loadSampleButton { "Load Sample" };
-    juce::TextButton trainButton { "Train" };
+    juce::TextButton loadSampleButton{"Load Sample"};
+    juce::TextButton trainButton{"Train"};
     juce::Label samplePathLabel;
     juce::Label statusLabel;
     juce::Label trainingProgressLabel;
+    juce::Label trainingTimeLabel;
     juce::Label frequencyLabel;
     juce::Label preHighPassCutoffLabel;
     juce::Label preHighPassSlopeLabel;
@@ -36,10 +37,11 @@ private:
     juce::Label distortionLabel;
     juce::Label keyboardLabel;
     double trainingProgressValue = 0.0;
-    juce::ProgressBar trainingProgressBar { trainingProgressValue };
+    juce::ProgressBar trainingProgressBar{trainingProgressValue};
+    juce::Slider trainingTimeSlider;
     juce::Slider referenceFrequencySlider;
-    juce::ToggleButton oscAPitchTrackToggle { "Pitch Track Osc A" };
-    juce::ToggleButton oscBPitchTrackToggle { "Pitch Track Osc B" };
+    juce::ToggleButton oscAPitchTrackToggle{"Track A"};
+    juce::ToggleButton oscBPitchTrackToggle{"Track B"};
     juce::Slider preHighPassCutoffSlider;
     juce::Slider preHighPassSlopeSlider;
     juce::Slider preLowPassCutoffSlider;
@@ -50,19 +52,17 @@ private:
     juce::Slider lowPassSlopeSlider;
     juce::Slider distortionSlider;
     juce::MidiKeyboardComponent keyboardComponent;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> trainingTimeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> frequencyAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
-        oscAPitchTrackAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
-        oscBPitchTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oscAPitchTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oscBPitchTrackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         preHighPassCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         preHighPassSlopeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         preLowPassCutoffAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
-        preLowPassSlopeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> preLowPassSlopeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highPassCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highPassSlopeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowPassCutoffAttachment;

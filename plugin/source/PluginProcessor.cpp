@@ -12,6 +12,7 @@
 namespace {
 constexpr auto kSamplePathProperty = "samplePath";
 constexpr auto kTrainedSettingsProperty = "trainedSettings";
+constexpr float kDefaultTrainingTimeSeconds = 60.0f;
 constexpr auto kDefaultReferenceFrequencyHz = 440.0f;
 constexpr bool kDefaultOscAPitchTrack = true;
 constexpr bool kDefaultOscBPitchTrack = true;
@@ -56,25 +57,25 @@ void disableSynthEffects(std::vector<float>& settings) {
     settings[adaptive_echo::constants::DISTORTION_INDEX] = kDefaultBypassDistortion;
 }
 
-adaptive_echo::FilterParameters<float> makeFilterParameters(juce::AudioProcessorValueTreeState& parameters,
-                                                            const juce::StringRef highPassCutoffId,
-                                                            const juce::StringRef highPassSlopeId,
-                                                            const juce::StringRef lowPassCutoffId,
-                                                            const juce::StringRef lowPassSlopeId) {
+adaptive_echo::FilterParameters<float> makeFilterParameters(
+    juce::AudioProcessorValueTreeState& parameters, const juce::StringRef highPassCutoffId,
+    const juce::StringRef highPassSlopeId, const juce::StringRef lowPassCutoffId,
+    const juce::StringRef lowPassSlopeId) {
     std::vector<float> normalized(4, 0.0f);
-    normalized[0] = getNormalizedParameterValue(parameters, highPassCutoffId,
-                                                kDefaultBypassHighPassCutoff);
+    normalized[0] =
+        getNormalizedParameterValue(parameters, highPassCutoffId, kDefaultBypassHighPassCutoff);
     normalized[1] =
         getNormalizedParameterValue(parameters, highPassSlopeId, kDefaultBypassHighPassSlope);
-    normalized[2] = getNormalizedParameterValue(parameters, lowPassCutoffId,
-                                                kDefaultBypassLowPassCutoff);
+    normalized[2] =
+        getNormalizedParameterValue(parameters, lowPassCutoffId, kDefaultBypassLowPassCutoff);
     normalized[3] =
         getNormalizedParameterValue(parameters, lowPassSlopeId, kDefaultBypassLowPassSlope);
     return adaptive_echo::mapFilterParameters(normalized, 0);
 }
 
 float getDistortionAmount(juce::AudioProcessorValueTreeState& parameters) {
-    return getNormalizedParameterValue(parameters, adaptive_echo::plugin_parameters::kDistortionAmountId,
+    return getNormalizedParameterValue(parameters,
+                                       adaptive_echo::plugin_parameters::kDistortionAmountId,
                                        kDefaultBypassDistortion);
 }
 }  // namespace
@@ -85,16 +86,18 @@ AdaptiveEchoAudioProcessor::AdaptiveEchoAudioProcessor()
       trainedSettings(adaptive_echo::default_settings()),
       statusText("Load a sample to train the synthesizer.") {}
 
-AdaptiveEchoAudioProcessor::~AdaptiveEchoAudioProcessor() {
-    stopTrainingThread();
-}
+AdaptiveEchoAudioProcessor::~AdaptiveEchoAudioProcessor() { stopTrainingThread(); }
 
 juce::AudioProcessorValueTreeState::ParameterLayout
 AdaptiveEchoAudioProcessor::createParameterLayout() {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
     auto frequencyRange = juce::NormalisableRange<float>(20.0f, 20000.0f, 0.01f, 0.25f);
+    auto trainingTimeRange = juce::NormalisableRange<float>(1.0f, 100.0f, 1.0f);
     auto normalizedRange = juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f);
 
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        adaptive_echo::plugin_parameters::kTrainingTimeSecondsId, "Training Time",
+        trainingTimeRange, kDefaultTrainingTimeSeconds));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         adaptive_echo::plugin_parameters::kReferenceFrequencyId, "Reference Frequency",
         frequencyRange, kDefaultReferenceFrequencyHz));
@@ -114,8 +117,8 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
         adaptive_echo::plugin_parameters::kPreLowPassCutoffId, "Pre Low-Pass Cutoff",
         normalizedRange, kDefaultBypassLowPassCutoff));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        adaptive_echo::plugin_parameters::kPreLowPassSlopeId, "Pre Low-Pass Slope",
-        normalizedRange, kDefaultBypassLowPassSlope));
+        adaptive_echo::plugin_parameters::kPreLowPassSlopeId, "Pre Low-Pass Slope", normalizedRange,
+        kDefaultBypassLowPassSlope));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         adaptive_echo::plugin_parameters::kHighPassCutoffId, "High-Pass Cutoff", normalizedRange,
         kDefaultBypassHighPassCutoff));
@@ -134,39 +137,25 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     return {params.begin(), params.end()};
 }
 
-const juce::String AdaptiveEchoAudioProcessor::getName() const {
-    return JucePlugin_Name;
-}
+const juce::String AdaptiveEchoAudioProcessor::getName() const { return JucePlugin_Name; }
 
-bool AdaptiveEchoAudioProcessor::acceptsMidi() const {
-    return true;
-}
+bool AdaptiveEchoAudioProcessor::acceptsMidi() const { return true; }
 
-bool AdaptiveEchoAudioProcessor::producesMidi() const {
-    return false;
-}
+bool AdaptiveEchoAudioProcessor::producesMidi() const { return false; }
 
-bool AdaptiveEchoAudioProcessor::isMidiEffect() const {
-    return false;
-}
+bool AdaptiveEchoAudioProcessor::isMidiEffect() const { return false; }
 
 double AdaptiveEchoAudioProcessor::getTailLengthSeconds() const {
     return adaptive_echo::constants::NUM_SECONDS;
 }
 
-int AdaptiveEchoAudioProcessor::getNumPrograms() {
-    return 1;
-}
+int AdaptiveEchoAudioProcessor::getNumPrograms() { return 1; }
 
-int AdaptiveEchoAudioProcessor::getCurrentProgram() {
-    return 0;
-}
+int AdaptiveEchoAudioProcessor::getCurrentProgram() { return 0; }
 
 void AdaptiveEchoAudioProcessor::setCurrentProgram(int) {}
 
-const juce::String AdaptiveEchoAudioProcessor::getProgramName(int) {
-    return {};
-}
+const juce::String AdaptiveEchoAudioProcessor::getProgramName(int) { return {}; }
 
 void AdaptiveEchoAudioProcessor::changeProgramName(int, const juce::String&) {}
 
@@ -204,9 +193,7 @@ juce::AudioProcessorEditor* AdaptiveEchoAudioProcessor::createEditor() {
     return new AdaptiveEchoAudioProcessorEditor(*this);
 }
 
-bool AdaptiveEchoAudioProcessor::hasEditor() const {
-    return true;
-}
+bool AdaptiveEchoAudioProcessor::hasEditor() const { return true; }
 
 void AdaptiveEchoAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
     const auto state = createStateTree();
@@ -256,7 +243,8 @@ bool AdaptiveEchoAudioProcessor::decodeAudioFile(const juce::String& path,
         for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
             mixed += buffer.getSample(channel, sample);
         }
-        monoSamples[static_cast<size_t>(sample)] = mixed / static_cast<float>(buffer.getNumChannels());
+        monoSamples[static_cast<size_t>(sample)] =
+            mixed / static_cast<float>(buffer.getNumChannels());
     }
 
     sampleRate = reader->sampleRate;
@@ -273,8 +261,8 @@ bool AdaptiveEchoAudioProcessor::loadSampleFromPath(const juce::String& path) {
         return false;
     }
 
-    auto processed = adaptive_echo::preprocess_target_audio(
-        monoSamples, sourceSampleRate, adaptive_echo::constants::NUM_SAMPLES);
+    auto processed = adaptive_echo::preprocess_target_audio(monoSamples, sourceSampleRate,
+                                                            adaptive_echo::constants::NUM_SAMPLES);
 
     {
         const std::lock_guard<std::mutex> lock(stateMutex);
@@ -303,21 +291,25 @@ void AdaptiveEchoAudioProcessor::beginTraining() {
         statusText = "Training in progress...";
     }
     resetTrainingProgress();
+    const auto selectedTrainingTimeLimitSeconds = getTrainingTimeLimitSeconds();
+    activeTrainingTimeLimitSeconds = selectedTrainingTimeLimitSeconds;
     sendChangeMessage();
 
-    trainingThread = std::thread([this, sample = std::move(sampleSnapshot)]() mutable {
+    trainingThread = std::thread([this, sample = std::move(sampleSnapshot),
+                                  selectedTrainingTimeLimitSeconds]() mutable {
         auto result = adaptive_echo::train_synth(
-            sample, trainingPopulationSize, trainingInitialSigma, trainingTimeLimitSeconds, false,
-            [this](const adaptive_echo::TrainingProgress& progress) {
+            sample, trainingPopulationSize, trainingInitialSigma, selectedTrainingTimeLimitSeconds,
+            false, [this](const adaptive_echo::TrainingProgress& progress) {
                 trainingGeneration = progress.generation;
                 trainingEvalCount = progress.eval_count;
                 trainingBestLoss = progress.best_loss;
                 trainingSigma = progress.sigma;
                 trainingElapsedSeconds = progress.elapsed_seconds;
                 const auto normalizedProgress =
-                    trainingTimeLimitSeconds > 0.0f
-                        ? std::clamp(progress.elapsed_seconds / trainingTimeLimitSeconds, 0.0f,
-                                     1.0f)
+                    activeTrainingTimeLimitSeconds.load() > 0.0f
+                        ? std::clamp(
+                              progress.elapsed_seconds / activeTrainingTimeLimitSeconds.load(),
+                              0.0f, 1.0f)
                         : 0.0f;
                 trainingProgress = normalizedProgress;
             });
@@ -325,9 +317,9 @@ void AdaptiveEchoAudioProcessor::beginTraining() {
         {
             const std::lock_guard<std::mutex> lock(stateMutex);
             trainedSettings = bestSettings;
-            statusText = juce::String::formatted(
-                "Training complete. Best loss %.4f after %d generations.", result.best_loss,
-                result.iterations_completed);
+            statusText =
+                juce::String::formatted("Training complete. Best loss %.4f after %d generations.",
+                                        result.best_loss, result.iterations_completed);
         }
         trainingGeneration = result.iterations_completed;
         trainingEvalCount = result.final_eval_count;
@@ -376,9 +368,7 @@ bool AdaptiveEchoAudioProcessor::canTrain() const {
     return !trainingActive.load() && !loadedSample.empty();
 }
 
-bool AdaptiveEchoAudioProcessor::isTraining() const {
-    return trainingActive.load();
-}
+bool AdaptiveEchoAudioProcessor::isTraining() const { return trainingActive.load(); }
 
 juce::String AdaptiveEchoAudioProcessor::getSamplePath() const {
     const std::lock_guard<std::mutex> lock(stateMutex);
@@ -400,6 +390,9 @@ juce::String AdaptiveEchoAudioProcessor::getTrainingProgressText() const {
     const auto bestLoss = trainingBestLoss.load();
     const auto sigma = trainingSigma.load();
     const auto elapsedSeconds = trainingElapsedSeconds.load();
+    const auto trainingTimeLimitSeconds = activeTrainingTimeLimitSeconds.load() > 0.0f
+                                              ? activeTrainingTimeLimitSeconds.load()
+                                              : getTrainingTimeLimitSeconds();
     const auto trainingNow = isTraining();
 
     if (generation <= 0 && evalCount <= 0 && !trainingNow) {
@@ -408,8 +401,8 @@ juce::String AdaptiveEchoAudioProcessor::getTrainingProgressText() const {
 
     if (trainingNow) {
         return juce::String::formatted(
-            "Generation %d  |  Loss %.4f  |  Sigma %.3f  |  Evals %d  |  %.1fs / %.0fs",
-            generation, bestLoss, sigma, evalCount, elapsedSeconds, trainingTimeLimitSeconds);
+            "Generation %d  |  Loss %.4f  |  Sigma %.3f  |  Evals %d  |  %.1fs / %.0fs", generation,
+            bestLoss, sigma, evalCount, elapsedSeconds, trainingTimeLimitSeconds);
     }
 
     return juce::String::formatted(
@@ -417,9 +410,7 @@ juce::String AdaptiveEchoAudioProcessor::getTrainingProgressText() const {
         elapsedSeconds, generation, bestLoss, sigma, evalCount);
 }
 
-juce::MidiKeyboardState& AdaptiveEchoAudioProcessor::getKeyboardState() {
-    return keyboardState;
-}
+juce::MidiKeyboardState& AdaptiveEchoAudioProcessor::getKeyboardState() { return keyboardState; }
 
 juce::AudioProcessorValueTreeState& AdaptiveEchoAudioProcessor::getParameters() {
     return parameters;
@@ -443,11 +434,20 @@ void AdaptiveEchoAudioProcessor::resetTrainingProgress() {
     trainingSigma = trainingInitialSigma;
     trainingElapsedSeconds = 0.0f;
     trainingProgress = 0.0f;
+    activeTrainingTimeLimitSeconds = 0.0f;
 }
 
 std::vector<float> AdaptiveEchoAudioProcessor::getCurrentSettingsSnapshot() const {
     const std::lock_guard<std::mutex> lock(stateMutex);
     return trainedSettings;
+}
+
+float AdaptiveEchoAudioProcessor::getTrainingTimeLimitSeconds() const {
+    if (auto* parameter = parameters.getRawParameterValue(
+            adaptive_echo::plugin_parameters::kTrainingTimeSecondsId)) {
+        return parameter->load();
+    }
+    return kDefaultTrainingTimeSeconds;
 }
 
 float AdaptiveEchoAudioProcessor::getReferenceFrequency() const {
@@ -469,20 +469,22 @@ void AdaptiveEchoAudioProcessor::startVoice(int midiNote, float velocity) {
     auto rendered =
         adaptive_echo::render_note_audio(settings, getReferenceFrequency(), midiNote,
                                          currentSampleRate, pitchTrackOscA, pitchTrackOscB);
-    auto preDistortionFilters = makeFilterParameters(
-        parameters, adaptive_echo::plugin_parameters::kPreHighPassCutoffId,
-        adaptive_echo::plugin_parameters::kPreHighPassSlopeId,
-        adaptive_echo::plugin_parameters::kPreLowPassCutoffId,
-        adaptive_echo::plugin_parameters::kPreLowPassSlopeId);
-    auto postDistortionFilters = makeFilterParameters(
-        parameters, adaptive_echo::plugin_parameters::kHighPassCutoffId,
-        adaptive_echo::plugin_parameters::kHighPassSlopeId,
-        adaptive_echo::plugin_parameters::kLowPassCutoffId,
-        adaptive_echo::plugin_parameters::kLowPassSlopeId);
+    auto preDistortionFilters =
+        makeFilterParameters(parameters, adaptive_echo::plugin_parameters::kPreHighPassCutoffId,
+                             adaptive_echo::plugin_parameters::kPreHighPassSlopeId,
+                             adaptive_echo::plugin_parameters::kPreLowPassCutoffId,
+                             adaptive_echo::plugin_parameters::kPreLowPassSlopeId);
+    auto postDistortionFilters =
+        makeFilterParameters(parameters, adaptive_echo::plugin_parameters::kHighPassCutoffId,
+                             adaptive_echo::plugin_parameters::kHighPassSlopeId,
+                             adaptive_echo::plugin_parameters::kLowPassCutoffId,
+                             adaptive_echo::plugin_parameters::kLowPassSlopeId);
 
-    adaptive_echo::applyFilters(preDistortionFilters, rendered, static_cast<float>(currentSampleRate));
+    adaptive_echo::applyFilters(preDistortionFilters, rendered,
+                                static_cast<float>(currentSampleRate));
     adaptive_echo::applyDistortion(getDistortionAmount(parameters), rendered);
-    adaptive_echo::applyFilters(postDistortionFilters, rendered, static_cast<float>(currentSampleRate));
+    adaptive_echo::applyFilters(postDistortionFilters, rendered,
+                                static_cast<float>(currentSampleRate));
 
     ActiveVoice voice;
     voice.samples = std::move(rendered);
@@ -547,8 +549,8 @@ void AdaptiveEchoAudioProcessor::restoreStateFromTree(const juce::ValueTree& sta
     parameters.replaceState(stateTree);
 
     const auto restoredPath = stateTree.getProperty(kSamplePathProperty).toString();
-    const auto restoredSettings =
-        adaptive_echo::deserialize_settings(stateTree.getProperty(kTrainedSettingsProperty).toString().toStdString());
+    const auto restoredSettings = adaptive_echo::deserialize_settings(
+        stateTree.getProperty(kTrainedSettingsProperty).toString().toStdString());
 
     {
         const std::lock_guard<std::mutex> lock(stateMutex);
@@ -557,7 +559,8 @@ void AdaptiveEchoAudioProcessor::restoreStateFromTree(const juce::ValueTree& sta
 
     if (restoredPath.isNotEmpty()) {
         if (!loadSampleFromPath(restoredPath)) {
-            setStatusText("Saved sample path could not be reloaded. Trained settings were restored.");
+            setStatusText(
+                "Saved sample path could not be reloaded. Trained settings were restored.");
         }
     }
 

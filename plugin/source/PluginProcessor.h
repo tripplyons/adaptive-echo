@@ -1,17 +1,18 @@
 #pragma once
 
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <thread>
 #include <vector>
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_audio_utils/juce_audio_utils.h>
-
 #include "adaptive_echo/engine.hpp"
 
 namespace adaptive_echo::plugin_parameters {
+inline constexpr auto kTrainingTimeSecondsId = "trainingTimeSeconds";
 inline constexpr auto kReferenceFrequencyId = "referenceFrequencyHz";
 inline constexpr auto kOscAPitchTrackId = "oscAPitchTrack";
 inline constexpr auto kOscBPitchTrackId = "oscBPitchTrack";
@@ -24,11 +25,11 @@ inline constexpr auto kHighPassSlopeId = "highPassSlope";
 inline constexpr auto kLowPassCutoffId = "lowPassCutoff";
 inline constexpr auto kLowPassSlopeId = "lowPassSlope";
 inline constexpr auto kDistortionAmountId = "distortionAmount";
-}
+}  // namespace adaptive_echo::plugin_parameters
 
 class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
                                          public juce::ChangeBroadcaster {
-public:
+   public:
     AdaptiveEchoAudioProcessor();
     ~AdaptiveEchoAudioProcessor() override;
 
@@ -67,7 +68,7 @@ public:
     juce::MidiKeyboardState& getKeyboardState();
     juce::AudioProcessorValueTreeState& getParameters();
 
-private:
+   private:
     struct ActiveVoice {
         std::vector<float> samples;
         size_t position = 0;
@@ -85,13 +86,13 @@ private:
     juce::String statusText;
 
     std::vector<ActiveVoice> activeVoices;
-    std::atomic<bool> trainingActive { false };
-    std::atomic<int> trainingGeneration { 0 };
-    std::atomic<int> trainingEvalCount { 0 };
-    std::atomic<float> trainingBestLoss { 0.0f };
-    std::atomic<float> trainingSigma { 0.0f };
-    std::atomic<float> trainingElapsedSeconds { 0.0f };
-    std::atomic<float> trainingProgress { 0.0f };
+    std::atomic<bool> trainingActive{false};
+    std::atomic<int> trainingGeneration{0};
+    std::atomic<int> trainingEvalCount{0};
+    std::atomic<float> trainingBestLoss{0.0f};
+    std::atomic<float> trainingSigma{0.0f};
+    std::atomic<float> trainingElapsedSeconds{0.0f};
+    std::atomic<float> trainingProgress{0.0f};
     std::thread trainingThread;
     double currentSampleRate = 48000.0;
     uint64_t voiceCounter = 0;
@@ -99,7 +100,7 @@ private:
     static constexpr int maxPolyphony = 16;
     static constexpr int trainingPopulationSize = adaptive_echo::kDefaultCRFMNESPopulationSize;
     static constexpr float trainingInitialSigma = adaptive_echo::kDefaultCRFMNESInitialSigma;
-    static constexpr float trainingTimeLimitSeconds = 60.0f;
+    std::atomic<float> activeTrainingTimeLimitSeconds{0.0f};
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     void stopTrainingThread();
@@ -109,6 +110,7 @@ private:
     void setStatusText(const juce::String& newStatus);
     void resetTrainingProgress();
     std::vector<float> getCurrentSettingsSnapshot() const;
+    float getTrainingTimeLimitSeconds() const;
     float getReferenceFrequency() const;
     void startVoice(int midiNote, float velocity);
     void mixActiveVoices(juce::AudioBuffer<float>& buffer);
