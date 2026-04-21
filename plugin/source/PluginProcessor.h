@@ -27,104 +27,117 @@ inline constexpr auto kHighPassSlopeId = "highPassSlope";
 inline constexpr auto kLowPassCutoffId = "lowPassCutoff";
 inline constexpr auto kLowPassSlopeId = "lowPassSlope";
 inline constexpr auto kDistortionAmountId = "distortionAmount";
-}  // namespace adaptive_echo::plugin_parameters
+} // namespace adaptive_echo::plugin_parameters
+
+namespace adaptive_echo::plugin_files {
+inline constexpr auto kPresetFileExtension = ".adaptiveechopreset";
+}
 
 class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
                                          public juce::ChangeBroadcaster {
-   public:
-    AdaptiveEchoAudioProcessor();
-    ~AdaptiveEchoAudioProcessor() override;
+public:
+  AdaptiveEchoAudioProcessor();
+  ~AdaptiveEchoAudioProcessor() override;
 
-    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override;
-    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
-    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+  void prepareToPlay(double sampleRate, int samplesPerBlock) override;
+  void releaseResources() override;
+  bool isBusesLayoutSupported(const BusesLayout &layouts) const override;
+  void processBlock(juce::AudioBuffer<float> &, juce::MidiBuffer &) override;
 
-    juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override;
+  juce::AudioProcessorEditor *createEditor() override;
+  bool hasEditor() const override;
 
-    const juce::String getName() const override;
-    bool acceptsMidi() const override;
-    bool producesMidi() const override;
-    bool isMidiEffect() const override;
-    double getTailLengthSeconds() const override;
+  const juce::String getName() const override;
+  bool acceptsMidi() const override;
+  bool producesMidi() const override;
+  bool isMidiEffect() const override;
+  double getTailLengthSeconds() const override;
 
-    int getNumPrograms() override;
-    int getCurrentProgram() override;
-    void setCurrentProgram(int index) override;
-    const juce::String getProgramName(int index) override;
-    void changeProgramName(int index, const juce::String& newName) override;
+  int getNumPrograms() override;
+  int getCurrentProgram() override;
+  void setCurrentProgram(int index) override;
+  const juce::String getProgramName(int index) override;
+  void changeProgramName(int index, const juce::String &newName) override;
 
-    void getStateInformation(juce::MemoryBlock& destData) override;
-    void setStateInformation(const void* data, int sizeInBytes) override;
+  void getStateInformation(juce::MemoryBlock &destData) override;
+  void setStateInformation(const void *data, int sizeInBytes) override;
 
-    bool loadSampleFromPath(const juce::String& path);
-    void beginTraining();
-    bool canTrain() const;
-    bool isTraining() const;
+  bool loadSampleFromPath(const juce::String &path);
+  bool savePresetToPath(const juce::String &path);
+  bool loadPresetFromPath(const juce::String &path);
+  void beginTraining();
+  bool canTrain() const;
+  bool isTraining() const;
 
-    juce::String getSamplePath() const;
-    juce::String getStatusText() const;
-    double getTrainingProgress() const;
-    juce::String getTrainingProgressText() const;
-    juce::MidiKeyboardState& getKeyboardState();
-    juce::AudioProcessorValueTreeState& getParameters();
+  juce::String getSamplePath() const;
+  juce::String getPresetPath() const;
+  juce::String getStatusText() const;
+  double getTrainingProgress() const;
+  juce::String getTrainingProgressText() const;
+  juce::MidiKeyboardState &getKeyboardState();
+  juce::AudioProcessorValueTreeState &getParameters();
+  juce::File getDefaultPresetDirectory() const;
 
-   private:
-    struct ActiveVoice {
-        std::vector<float> samples;
-        size_t position = 0;
-        float velocity = 1.0f;
-        float gain = 1.0f;
-        float releaseStep = 0.0f;
-        uint64_t order = 0;
-    };
+private:
+  struct ActiveVoice {
+    std::vector<float> samples;
+    size_t position = 0;
+    float velocity = 1.0f;
+    float gain = 1.0f;
+    float releaseStep = 0.0f;
+    uint64_t order = 0;
+  };
 
-    juce::AudioProcessorValueTreeState parameters;
-    juce::MidiKeyboardState keyboardState;
+  juce::AudioProcessorValueTreeState parameters;
+  juce::MidiKeyboardState keyboardState;
 
-    mutable std::mutex stateMutex;
-    std::vector<float> trainedSettings;
-    std::vector<float> loadedSample;
-    juce::String samplePath;
-    juce::String statusText;
+  mutable std::mutex stateMutex;
+  std::vector<float> trainedSettings;
+  std::vector<float> loadedSample;
+  juce::String samplePath;
+  juce::String currentPresetPath;
+  juce::String statusText;
 
-    std::vector<ActiveVoice> activeVoices;
-    std::atomic<bool> trainingActive{false};
-    std::atomic<int> trainingGeneration{0};
-    std::atomic<int> trainingEvalCount{0};
-    std::atomic<float> trainingBestLoss{0.0f};
-    std::atomic<float> trainingSigma{0.0f};
-    std::atomic<float> trainingElapsedSeconds{0.0f};
-    std::atomic<float> trainingProgress{0.0f};
-    std::thread trainingThread;
-    double currentSampleRate = 48000.0;
-    uint64_t voiceCounter = 0;
+  std::vector<ActiveVoice> activeVoices;
+  std::atomic<bool> trainingActive{false};
+  std::atomic<int> trainingGeneration{0};
+  std::atomic<int> trainingEvalCount{0};
+  std::atomic<float> trainingBestLoss{0.0f};
+  std::atomic<float> trainingSigma{0.0f};
+  std::atomic<float> trainingElapsedSeconds{0.0f};
+  std::atomic<float> trainingProgress{0.0f};
+  std::thread trainingThread;
+  double currentSampleRate = 48000.0;
+  uint64_t voiceCounter = 0;
 
-    static constexpr int maxPolyphony = 16;
-    static constexpr int trainingPopulationSize = adaptive_echo::kDefaultCRFMNESPopulationSize;
-    static constexpr float trainingInitialSigma = adaptive_echo::kDefaultCRFMNESInitialSigma;
-    std::atomic<float> activeTrainingTimeLimitSeconds{0.0f};
+  static constexpr int maxPolyphony = 16;
+  static constexpr int trainingPopulationSize =
+      adaptive_echo::kDefaultCRFMNESPopulationSize;
+  static constexpr float trainingInitialSigma =
+      adaptive_echo::kDefaultCRFMNESInitialSigma;
+  std::atomic<float> activeTrainingTimeLimitSeconds{0.0f};
 
-    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void stopTrainingThread();
-    void syncEffectParametersFromSettings(const std::vector<float>& settings);
-    bool decodeAudioFile(const juce::String& path, std::vector<float>& monoSamples,
-                         double& sampleRate, juce::String& errorText) const;
-    void setStatusText(const juce::String& newStatus);
-    void resetTrainingProgress();
-    std::vector<float> getCurrentSettingsSnapshot() const;
-    float getTrainingTimeLimitSeconds() const;
-    float getReferenceFrequency() const;
-    bool isSingleVoiceEnabled() const;
-    bool isConstantVelocityEnabled() const;
-    void startVoiceRelease(ActiveVoice& voice);
-    void startVoice(int midiNote, float velocity);
-    void mixActiveVoices(juce::AudioBuffer<float>& buffer);
-    void restoreStateFromTree(const juce::ValueTree& stateTree);
-    juce::ValueTree createStateTree();
+  static juce::AudioProcessorValueTreeState::ParameterLayout
+  createParameterLayout();
+  void stopTrainingThread();
+  void syncEffectParametersFromSettings(const std::vector<float> &settings);
+  bool decodeAudioFile(const juce::String &path,
+                       std::vector<float> &monoSamples, double &sampleRate,
+                       juce::String &errorText) const;
+  void setStatusText(const juce::String &newStatus);
+  void resetTrainingProgress();
+  std::vector<float> getCurrentSettingsSnapshot() const;
+  float getTrainingTimeLimitSeconds() const;
+  float getReferenceFrequency() const;
+  bool isSingleVoiceEnabled() const;
+  bool isConstantVelocityEnabled() const;
+  void startVoiceRelease(ActiveVoice &voice);
+  void startVoice(int midiNote, float velocity);
+  void mixActiveVoices(juce::AudioBuffer<float> &buffer);
+  void restoreStateFromTree(const juce::ValueTree &stateTree);
+  juce::ValueTree createStateTree();
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessor)
+  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AdaptiveEchoAudioProcessor)
 };
 
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
+juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter();

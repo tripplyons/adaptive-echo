@@ -22,6 +22,7 @@ The build produces `VST3` and `Standalone` targets. `COPY_PLUGIN_AFTER_BUILD` is
 ## Plugin Interface
 
 - Load a training sample from disk
+- Save the current plugin state as a preset and reload saved presets
 - Choose the reference frequency used to tune the learned sound
 - Train the synthesizer with the staged fitting pipeline
 - Play notes from the JUCE on-screen keyboard or host MIDI
