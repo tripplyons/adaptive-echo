@@ -31,7 +31,7 @@ constexpr float kMinEnvelopeReleaseSeconds = 0.05f;
 constexpr float kMaxEnvelopeReleaseSeconds = 0.5f;
 constexpr float kMinFilterCutoffHz = 20.0f;
 constexpr float kMaxFilterCutoffHz = 20000.0f;
-constexpr int kRefinementPopulationSize = 16;
+constexpr int kRefinementPopulationSize = 32;
 
 struct TargetAudioSummary {
     float dominant_frequency_hz = 440.0f;

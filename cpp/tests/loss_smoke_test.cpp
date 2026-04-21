@@ -82,8 +82,12 @@ bool any_difference(const std::vector<float>& lhs, const std::vector<float>& rhs
 }
 
 template <typename T>
-bool same_feature_signature(const adaptive_echo::RandomLossWindow<T>& lhs,
-                            const adaptive_echo::RandomLossWindow<T>& rhs) {
+bool same_window_signature(const adaptive_echo::RandomLossWindow<T>& lhs,
+                           const adaptive_echo::RandomLossWindow<T>& rhs) {
+    if (lhs.spectral_group_edges_16 != rhs.spectral_group_edges_16 ||
+        lhs.spectral_group_edges_4 != rhs.spectral_group_edges_4) {
+        return false;
+    }
     if (lhs.features.size() != rhs.features.size()) {
         return false;
     }
@@ -97,6 +101,28 @@ bool same_feature_signature(const adaptive_echo::RandomLossWindow<T>& lhs,
         }
     }
     return true;
+}
+
+bool valid_group_edges(const std::vector<size_t>& edges, size_t num_freqs, size_t group_count) {
+    if (edges.size() != group_count + 1 || edges.empty() || edges.front() != 0 ||
+        edges.back() != num_freqs) {
+        return false;
+    }
+    for (size_t i = 1; i < edges.size(); ++i) {
+        if (edges[i] <= edges[i - 1]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool grouped_edges_4_derived_from_16(const std::vector<size_t>& edges_16,
+                                     const std::vector<size_t>& edges_4) {
+    if (edges_16.size() != 17 || edges_4.size() != 5) {
+        return false;
+    }
+    return edges_4[0] == edges_16[0] && edges_4[1] == edges_16[4] && edges_4[2] == edges_16[8] &&
+           edges_4[3] == edges_16[12] && edges_4[4] == edges_16[16];
 }
 
 int require(bool condition, const std::string& message) {
@@ -164,15 +190,46 @@ int main() {
     }
 
     const auto schedule = adaptive_echo::detail::make_random_loss_schedule(target, 1337);
+    const auto repeated_schedule = adaptive_echo::detail::make_random_loss_schedule(target, 1337);
+    bool same_seed_reproduces_schedule = schedule.windows.size() == repeated_schedule.windows.size();
+    for (size_t i = 0; same_seed_reproduces_schedule && i < schedule.windows.size(); ++i) {
+        if (!same_window_signature(schedule.windows[i], repeated_schedule.windows[i])) {
+            same_seed_reproduces_schedule = false;
+        }
+    }
+    if (const int rc = require(same_seed_reproduces_schedule,
+                               "same seed should reproduce grouped edges and feature choices")) {
+        return rc;
+    }
+
     bool found_distinct_window_features = false;
+    bool found_independent_groupings = false;
     for (size_t i = 1; i < schedule.windows.size(); ++i) {
-        if (!same_feature_signature(schedule.windows.front(), schedule.windows[i])) {
+        if (!same_window_signature(schedule.windows.front(), schedule.windows[i])) {
             found_distinct_window_features = true;
-            break;
+        }
+    }
+    for (const auto& window : schedule.windows) {
+        const size_t num_freqs = window.window.fft_size / 2 + 1;
+        if (const int rc = require(valid_group_edges(window.spectral_group_edges_16, num_freqs, 16),
+                                   "16-bin grouped edges should be sorted and span the spectrum")) {
+            return rc;
+        }
+        if (const int rc = require(valid_group_edges(window.spectral_group_edges_4, num_freqs, 4),
+                                   "4-bin grouped edges should be sorted and span the spectrum")) {
+            return rc;
+        }
+        if (!grouped_edges_4_derived_from_16(window.spectral_group_edges_16,
+                                             window.spectral_group_edges_4)) {
+            found_independent_groupings = true;
         }
     }
     if (const int rc = require(found_distinct_window_features,
                                "different windows should sample different cepstral feature sets")) {
+        return rc;
+    }
+    if (const int rc = require(found_independent_groupings,
+                               "4-bin and 16-bin grouped edges should be sampled independently")) {
         return rc;
     }
 
@@ -209,6 +266,12 @@ int main() {
         adaptive_echo::RandomLossWindow<float> fixed_window;
         fixed_window.window =
             adaptive_echo::RandomWindowSpec<float> {1024, 0, adaptive_echo::RandomWindowType::Hann, 0.0f};
+        std::mt19937_64 rng(4242);
+        const size_t num_freqs = fixed_window.window.fft_size / 2 + 1;
+        fixed_window.spectral_group_edges_16 =
+            adaptive_echo::detail::compute_random_group_edges<float>(num_freqs, 16, rng);
+        fixed_window.spectral_group_edges_4 =
+            adaptive_echo::detail::compute_random_group_edges<float>(num_freqs, 4, rng);
         const auto fixed_context =
             adaptive_echo::detail::prepare_window_context(target, fixed_window);
         const auto identical_spectrum =

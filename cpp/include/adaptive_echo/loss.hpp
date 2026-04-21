@@ -52,6 +52,8 @@ struct RandomCepstralFeatureSpec {
 template <typename T>
 struct RandomLossWindow {
     RandomWindowSpec<T> window;
+    std::vector<size_t> spectral_group_edges_16;
+    std::vector<size_t> spectral_group_edges_4;
     std::vector<RandomCepstralFeatureSpec<T>> features;
 };
 
@@ -76,7 +78,7 @@ inline constexpr size_t kRandomFeaturesPerWindow = 32;
 inline constexpr size_t kFullSpectrumCoeffLimit = 64;
 inline constexpr size_t kSpectralGroupCount16 = 16;
 inline constexpr size_t kSpectralGroupCount4 = 4;
-inline constexpr std::array<size_t, 6> kFftCandidates = {256, 512, 1024, 2048, 4096, 8192};
+inline constexpr std::array<size_t, 5> kFftCandidates = {256, 512, 1024, 2048, 4096};
 
 template <typename T>
 inline T clamp_epsilon(T value, T epsilon = static_cast<T>(1e-8)) {
@@ -482,6 +484,37 @@ inline std::vector<size_t> compute_linear_group_edges(size_t num_freqs, size_t g
     return edges;
 }
 
+template <typename T, typename RNG>
+inline std::vector<size_t> compute_random_group_edges(size_t num_freqs, size_t group_count, RNG& rng) {
+    if (num_freqs == 0) {
+        return {0};
+    }
+
+    group_count = std::max<size_t>(1, std::min(group_count, num_freqs));
+    std::vector<size_t> edges(group_count + 1);
+    edges.front() = 0;
+    edges.back() = num_freqs;
+    if (group_count == 1) {
+        return edges;
+    }
+
+    std::uniform_real_distribution<T> threshold_distribution(
+        static_cast<T>(0), static_cast<T>(num_freqs));
+    std::vector<T> thresholds(group_count - 1);
+    for (T& threshold : thresholds) {
+        threshold = threshold_distribution(rng);
+    }
+    std::sort(thresholds.begin(), thresholds.end());
+
+    for (size_t group = 1; group < group_count; ++group) {
+        const size_t proposed_edge =
+            static_cast<size_t>(std::llround(static_cast<long double>(thresholds[group - 1])));
+        edges[group] =
+            std::clamp(proposed_edge, edges[group - 1] + 1, num_freqs - (group_count - group));
+    }
+    return edges;
+}
+
 template <typename T>
 inline std::vector<T> compute_grouped_magnitude_sums(const std::vector<T>& magnitude,
                                                      const std::vector<size_t>& group_edges) {
@@ -612,9 +645,13 @@ inline RandomLossSchedule<T> make_random_loss_schedule(const std::vector<T>& tar
     for (size_t window_index = 0; window_index < kRandomWindowCount; ++window_index) {
         RandomLossWindow<T> loss_window;
         loss_window.window = sample_window_spec<T>(target_audio.size(), rng);
-        loss_window.features.reserve(kRandomFeaturesPerWindow);
 
         const size_t num_freqs = loss_window.window.fft_size / 2 + 1;
+        loss_window.spectral_group_edges_16 =
+            compute_random_group_edges<T>(num_freqs, kSpectralGroupCount16, rng);
+        loss_window.spectral_group_edges_4 =
+            compute_random_group_edges<T>(num_freqs, kSpectralGroupCount4, rng);
+        loss_window.features.reserve(kRandomFeaturesPerWindow);
         const size_t full_coeffs = std::max<size_t>(2, std::min(kFullSpectrumCoeffLimit, num_freqs));
         std::bernoulli_distribution family_distribution(0.5);
         std::uniform_int_distribution<size_t> full_coeff_distribution(1, full_coeffs - 1);
@@ -730,14 +767,12 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
     context.frequency_weights = compute_frequency_weights<T>(
         context.target_spectrum.size(), loss_window.window.fft_size,
         static_cast<T>(constants::TRAINING_SAMPLE_RATE));
-    context.spectral_group_edges_16 =
-        compute_linear_group_edges<T>(context.target_spectrum.size(), kSpectralGroupCount16);
+    context.spectral_group_edges_16 = loss_window.spectral_group_edges_16;
     context.spectral_group_weights_16 =
         aggregate_band_weights(context.frequency_weights, context.spectral_group_edges_16);
     context.target_grouped_spectrum_16 =
         compute_grouped_magnitude_sums(context.target_spectrum, context.spectral_group_edges_16);
-    context.spectral_group_edges_4 =
-        compute_linear_group_edges<T>(context.target_spectrum.size(), kSpectralGroupCount4);
+    context.spectral_group_edges_4 = loss_window.spectral_group_edges_4;
     context.spectral_group_weights_4 =
         aggregate_band_weights(context.frequency_weights, context.spectral_group_edges_4);
     context.target_grouped_spectrum_4 =
