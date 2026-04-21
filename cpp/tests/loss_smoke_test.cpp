@@ -110,6 +110,37 @@ int require(bool condition, const std::string& message) {
 }  // namespace
 
 int main() {
+    {
+        const std::vector<float> frequency_weights = {1.0f, 2.0f, 3.0f, 4.0f,
+                                                      5.0f, 6.0f, 7.0f, 8.0f};
+        const auto grouped_edges = adaptive_echo::detail::compute_linear_group_edges<float>(8, 4);
+        const auto grouped_weights =
+            adaptive_echo::detail::aggregate_band_weights(frequency_weights, grouped_edges);
+        const std::vector<float> target_spectrum = {1.0f, 2.0f, 3.0f, 4.0f,
+                                                    5.0f, 6.0f, 7.0f, 8.0f};
+        const auto grouped_target =
+            adaptive_echo::detail::compute_grouped_magnitude_sums(target_spectrum, grouped_edges);
+        const auto grouped_identical =
+            adaptive_echo::detail::compute_grouped_magnitude_sums(target_spectrum, grouped_edges);
+        const float grouped_identical_loss = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            grouped_identical, grouped_target, grouped_weights);
+        if (const int rc = require(grouped_identical_loss < 1e-6f,
+                                   "grouped spectral sums should have zero loss for exact matches")) {
+            return rc;
+        }
+
+        const std::vector<float> shifted_energy_spectrum = {1.0f, 2.0f, 4.0f, 5.0f,
+                                                            5.0f, 6.0f, 8.0f, 9.0f};
+        const auto grouped_shifted = adaptive_echo::detail::compute_grouped_magnitude_sums(
+            shifted_energy_spectrum, grouped_edges);
+        const float grouped_shifted_loss = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            grouped_shifted, grouped_target, grouped_weights);
+        if (const int rc = require(grouped_shifted_loss > 0.0f,
+                                   "grouped spectral sums should respond to grouped energy changes")) {
+            return rc;
+        }
+    }
+
     const auto target = make_sine(220.0f);
     const auto gain_variant = scale_audio(target, 0.7f);
     const auto offset_variant = offset_audio(target, 97);
@@ -172,6 +203,42 @@ int main() {
                                    perturbation_scores[3] > perturbation_scores[0],
                                "simple perturbations should increase the loss")) {
         return rc;
+    }
+
+    {
+        adaptive_echo::RandomLossWindow<float> fixed_window;
+        fixed_window.window =
+            adaptive_echo::RandomWindowSpec<float> {1024, 0, adaptive_echo::RandomWindowType::Hann, 0.0f};
+        const auto fixed_context =
+            adaptive_echo::detail::prepare_window_context(target, fixed_window);
+        const auto identical_spectrum =
+            adaptive_echo::detail::compute_windowed_magnitude_spectrum(target, fixed_context.window);
+        const auto offset_spectrum = adaptive_echo::detail::compute_windowed_magnitude_spectrum(
+            offset_variant, fixed_context.window);
+        const float grouped_16_identical = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            adaptive_echo::detail::compute_grouped_magnitude_sums(
+                identical_spectrum, fixed_context.spectral_group_edges_16),
+            fixed_context.target_grouped_spectrum_16, fixed_context.spectral_group_weights_16);
+        const float grouped_16_offset = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            adaptive_echo::detail::compute_grouped_magnitude_sums(
+                offset_spectrum, fixed_context.spectral_group_edges_16),
+            fixed_context.target_grouped_spectrum_16, fixed_context.spectral_group_weights_16);
+        const float grouped_4_identical = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            adaptive_echo::detail::compute_grouped_magnitude_sums(
+                identical_spectrum, fixed_context.spectral_group_edges_4),
+            fixed_context.target_grouped_spectrum_4, fixed_context.spectral_group_weights_4);
+        const float grouped_4_offset = adaptive_echo::detail::compute_weighted_log_magnitude_loss(
+            adaptive_echo::detail::compute_grouped_magnitude_sums(
+                offset_spectrum, fixed_context.spectral_group_edges_4),
+            fixed_context.target_grouped_spectrum_4, fixed_context.spectral_group_weights_4);
+        if (const int rc = require(grouped_16_identical < 1e-6f && grouped_16_offset > 0.0f,
+                                   "16-bin grouped spectral term should detect perturbations")) {
+            return rc;
+        }
+        if (const int rc = require(grouped_4_identical < 1e-6f && grouped_4_offset > 0.0f,
+                                   "4-bin grouped spectral term should detect perturbations")) {
+            return rc;
+        }
     }
 
     std::cout << "loss_smoke_test passed\n";

@@ -70,10 +70,12 @@ struct TargetFeaturesFast {
 
 namespace detail {
 
-inline constexpr size_t kRandomWindowCount = 100;
-inline constexpr size_t kRandomFeaturesPerWindow = 16;
+inline constexpr size_t kRandomWindowCount = 128;
+inline constexpr size_t kRandomFeaturesPerWindow = 32;
 inline constexpr size_t kFullSpectrumCoeffLimit = 64;
-inline constexpr std::array<size_t, 5> kFftCandidates = {256, 512, 1024, 2048, 4096};
+inline constexpr size_t kSpectralGroupCount16 = 16;
+inline constexpr size_t kSpectralGroupCount4 = 4;
+inline constexpr std::array<size_t, 4> kFftCandidates = {256, 512, 1024, 2048};
 
 template <typename T>
 inline T clamp_epsilon(T value, T epsilon = static_cast<T>(1e-8)) {
@@ -422,6 +424,37 @@ inline std::vector<T> compute_band_spectrum(const std::vector<T>& magnitude,
 }
 
 template <typename T>
+inline std::vector<size_t> compute_linear_group_edges(size_t num_freqs, size_t group_count) {
+    if (num_freqs == 0) {
+        return {0};
+    }
+
+    group_count = std::max<size_t>(1, std::min(group_count, num_freqs));
+    std::vector<size_t> edges(group_count + 1);
+    for (size_t group = 0; group <= group_count; ++group) {
+        edges[group] = group * num_freqs / group_count;
+    }
+    edges.front() = 0;
+    edges.back() = num_freqs;
+    return edges;
+}
+
+template <typename T>
+inline std::vector<T> compute_grouped_magnitude_sums(const std::vector<T>& magnitude,
+                                                     const std::vector<size_t>& group_edges) {
+    const size_t group_count = group_edges.size() > 1 ? group_edges.size() - 1 : 0;
+    std::vector<T> grouped_sums(group_count, static_cast<T>(0));
+    for (size_t group = 0; group < group_count; ++group) {
+        T sum = static_cast<T>(0);
+        for (size_t bin = group_edges[group]; bin < group_edges[group + 1]; ++bin) {
+            sum += magnitude[bin];
+        }
+        grouped_sums[group] = sum;
+    }
+    return grouped_sums;
+}
+
+template <typename T>
 inline T compute_weighted_cepstral_coefficient(const std::vector<T>& spectrum,
                                                const std::vector<T>& weights,
                                                size_t coefficient) {
@@ -593,6 +626,12 @@ struct PreparedWindowContext {
     RandomWindowSpec<T> window;
     std::vector<T> frequency_weights;
     std::vector<T> target_spectrum;
+    std::vector<size_t> spectral_group_edges_16;
+    std::vector<T> spectral_group_weights_16;
+    std::vector<T> target_grouped_spectrum_16;
+    std::vector<size_t> spectral_group_edges_4;
+    std::vector<T> spectral_group_weights_4;
+    std::vector<T> target_grouped_spectrum_4;
     std::vector<T> full_cepstral_weights;
     T spectral_normalization = static_cast<T>(1);
     std::vector<PreparedBandContext<T>> band_contexts;
@@ -603,6 +642,17 @@ template <typename T>
 inline PreparedBandContext<T>* find_band_context(std::vector<PreparedBandContext<T>>& band_contexts,
                                                  size_t band_count) {
     for (auto& context : band_contexts) {
+        if (context.band_count == band_count) {
+            return &context;
+        }
+    }
+    return nullptr;
+}
+
+template <typename T>
+inline const PreparedBandContext<T>* find_band_context(
+    const std::vector<PreparedBandContext<T>>& band_contexts, size_t band_count) {
+    for (const auto& context : band_contexts) {
         if (context.band_count == band_count) {
             return &context;
         }
@@ -633,6 +683,18 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
     context.frequency_weights = compute_frequency_weights<T>(
         context.target_spectrum.size(), loss_window.window.fft_size,
         static_cast<T>(constants::TRAINING_SAMPLE_RATE));
+    context.spectral_group_edges_16 =
+        compute_linear_group_edges<T>(context.target_spectrum.size(), kSpectralGroupCount16);
+    context.spectral_group_weights_16 =
+        aggregate_band_weights(context.frequency_weights, context.spectral_group_edges_16);
+    context.target_grouped_spectrum_16 =
+        compute_grouped_magnitude_sums(context.target_spectrum, context.spectral_group_edges_16);
+    context.spectral_group_edges_4 =
+        compute_linear_group_edges<T>(context.target_spectrum.size(), kSpectralGroupCount4);
+    context.spectral_group_weights_4 =
+        aggregate_band_weights(context.frequency_weights, context.spectral_group_edges_4);
+    context.target_grouped_spectrum_4 =
+        compute_grouped_magnitude_sums(context.target_spectrum, context.spectral_group_edges_4);
 
     const size_t full_coeff_count =
         std::max<size_t>(2, std::min(kFullSpectrumCoeffLimit, context.target_spectrum.size()));
@@ -712,9 +774,18 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
     size_t total_spectral_terms = 0;
     for (const auto& context : contexts) {
         const auto spectrum = compute_windowed_magnitude_spectrum(generated, context.window);
-        spectral_loss += compute_weighted_log_magnitude_loss(
-            spectrum, context.target_spectrum, context.frequency_weights) /
-                         context.spectral_normalization;
+        const auto grouped_spectrum_16 =
+            compute_grouped_magnitude_sums(spectrum, context.spectral_group_edges_16);
+        const auto grouped_spectrum_4 =
+            compute_grouped_magnitude_sums(spectrum, context.spectral_group_edges_4);
+        const T full_spectral_term = compute_weighted_log_magnitude_loss(
+            spectrum, context.target_spectrum, context.frequency_weights);
+        const T grouped_spectral_term_16 = compute_weighted_log_magnitude_loss(
+            grouped_spectrum_16, context.target_grouped_spectrum_16, context.spectral_group_weights_16);
+        const T grouped_spectral_term_4 = compute_weighted_log_magnitude_loss(
+            grouped_spectrum_4, context.target_grouped_spectrum_4, context.spectral_group_weights_4);
+        spectral_loss += (full_spectral_term + grouped_spectral_term_16 + grouped_spectral_term_4) /
+                         (static_cast<T>(3) * context.spectral_normalization);
         ++total_spectral_terms;
         std::vector<std::pair<size_t, std::vector<T>>> generated_band_cache;
         generated_band_cache.reserve(context.band_contexts.size());
@@ -729,14 +800,8 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
                     generated_band_cache.begin(), generated_band_cache.end(),
                     [&](const auto& entry) { return entry.first == feature.band_count; });
                 if (cache_it == generated_band_cache.end()) {
-                    const auto* band_context = [&]() -> const PreparedBandContext<T>* {
-                        for (const auto& candidate : context.band_contexts) {
-                            if (candidate.band_count == feature.band_count) {
-                                return &candidate;
-                            }
-                        }
-                        return nullptr;
-                    }();
+                    const auto* band_context =
+                        find_band_context(context.band_contexts, feature.band_count);
                     if (band_context == nullptr) {
                         continue;
                     }
@@ -747,14 +812,8 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
                     cache_it = std::prev(generated_band_cache.end());
                 }
 
-                const auto* band_context = [&]() -> const PreparedBandContext<T>* {
-                    for (const auto& candidate : context.band_contexts) {
-                        if (candidate.band_count == feature.band_count) {
-                            return &candidate;
-                        }
-                    }
-                    return nullptr;
-                }();
+                const auto* band_context =
+                    find_band_context(context.band_contexts, feature.band_count);
                 if (band_context == nullptr) {
                     continue;
                 }
