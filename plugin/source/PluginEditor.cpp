@@ -105,8 +105,16 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     oscBPitchTrackToggle.setColour(juce::ToggleButton::textColourId, kPrimaryText);
     oscBPitchTrackToggle.setColour(juce::ToggleButton::tickColourId, kAccentBlueDark);
     oscBPitchTrackToggle.setColour(juce::ToggleButton::tickDisabledColourId, kSecondaryText);
+    singleVoiceToggle.setColour(juce::ToggleButton::textColourId, kPrimaryText);
+    singleVoiceToggle.setColour(juce::ToggleButton::tickColourId, kAccentBlueDark);
+    singleVoiceToggle.setColour(juce::ToggleButton::tickDisabledColourId, kSecondaryText);
+    constantVelocityToggle.setColour(juce::ToggleButton::textColourId, kPrimaryText);
+    constantVelocityToggle.setColour(juce::ToggleButton::tickColourId, kAccentBlueDark);
+    constantVelocityToggle.setColour(juce::ToggleButton::tickDisabledColourId, kSecondaryText);
     addAndMakeVisible(oscAPitchTrackToggle);
     addAndMakeVisible(oscBPitchTrackToggle);
+    addAndMakeVisible(singleVoiceToggle);
+    addAndMakeVisible(constantVelocityToggle);
 
     configureEffectSlider(preHighPassCutoffSlider, preHighPassCutoffLabel, "Pre HP Cutoff");
     configureEffectSlider(preHighPassSlopeSlider, preHighPassSlopeLabel, "Pre HP Slope");
@@ -122,6 +130,11 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     keyboardLabel.setColour(juce::Label::textColourId, kPrimaryText);
     keyboardLabel.setFont(juce::FontOptions(15.0f, juce::Font::bold));
     addAndMakeVisible(keyboardLabel);
+
+    behaviorLabel.setText("Behavior", juce::dontSendNotification);
+    behaviorLabel.setColour(juce::Label::textColourId, kPrimaryText);
+    behaviorLabel.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+    addAndMakeVisible(behaviorLabel);
 
     keyboardComponent.setAvailableRange(24, 96);
     keyboardComponent.setLowestVisibleKey(48);
@@ -143,6 +156,13 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
         std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
             audioProcessor.getParameters(), adaptive_echo::plugin_parameters::kOscBPitchTrackId,
             oscBPitchTrackToggle);
+    singleVoiceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getParameters(), adaptive_echo::plugin_parameters::kSingleVoiceId,
+        singleVoiceToggle);
+    constantVelocityAttachment =
+        std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            audioProcessor.getParameters(), adaptive_echo::plugin_parameters::kConstantVelocityId,
+            constantVelocityToggle);
     preHighPassCutoffAttachment =
         std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             audioProcessor.getParameters(), adaptive_echo::plugin_parameters::kPreHighPassCutoffId,
@@ -300,6 +320,12 @@ void AdaptiveEchoAudioProcessorEditor::resized() {
     oscAPitchTrackToggle.setBounds(pitchTrackArea.removeFromTop(24));
     pitchTrackArea.removeFromTop(8);
     oscBPitchTrackToggle.setBounds(pitchTrackArea.removeFromTop(24));
+    pitchTrackArea.removeFromTop(16);
+    behaviorLabel.setBounds(pitchTrackArea.removeFromTop(24));
+    pitchTrackArea.removeFromTop(8);
+    singleVoiceToggle.setBounds(pitchTrackArea.removeFromTop(24));
+    pitchTrackArea.removeFromTop(8);
+    constantVelocityToggle.setBounds(pitchTrackArea.removeFromTop(24));
     keyboardArea.removeFromLeft(16);
     keyboardComponent.setBounds(keyboardArea.removeFromTop(222));
 }

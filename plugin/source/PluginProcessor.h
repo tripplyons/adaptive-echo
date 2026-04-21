@@ -16,6 +16,8 @@ inline constexpr auto kTrainingTimeSecondsId = "trainingTimeSeconds";
 inline constexpr auto kReferenceFrequencyId = "referenceFrequencyHz";
 inline constexpr auto kOscAPitchTrackId = "oscAPitchTrack";
 inline constexpr auto kOscBPitchTrackId = "oscBPitchTrack";
+inline constexpr auto kSingleVoiceId = "singleVoice";
+inline constexpr auto kConstantVelocityId = "constantVelocity";
 inline constexpr auto kPreHighPassCutoffId = "preHighPassCutoff";
 inline constexpr auto kPreHighPassSlopeId = "preHighPassSlope";
 inline constexpr auto kPreLowPassCutoffId = "preLowPassCutoff";
@@ -73,6 +75,8 @@ class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
         std::vector<float> samples;
         size_t position = 0;
         float velocity = 1.0f;
+        float gain = 1.0f;
+        float releaseStep = 0.0f;
         uint64_t order = 0;
     };
 
@@ -112,6 +116,9 @@ class AdaptiveEchoAudioProcessor final : public juce::AudioProcessor,
     std::vector<float> getCurrentSettingsSnapshot() const;
     float getTrainingTimeLimitSeconds() const;
     float getReferenceFrequency() const;
+    bool isSingleVoiceEnabled() const;
+    bool isConstantVelocityEnabled() const;
+    void startVoiceRelease(ActiveVoice& voice);
     void startVoice(int midiNote, float velocity);
     void mixActiveVoices(juce::AudioBuffer<float>& buffer);
     void restoreStateFromTree(const juce::ValueTree& stateTree);

@@ -16,11 +16,14 @@ constexpr float kDefaultTrainingTimeSeconds = 60.0f;
 constexpr auto kDefaultReferenceFrequencyHz = 440.0f;
 constexpr bool kDefaultOscAPitchTrack = true;
 constexpr bool kDefaultOscBPitchTrack = true;
+constexpr bool kDefaultSingleVoice = false;
+constexpr bool kDefaultConstantVelocity = false;
 constexpr float kDefaultBypassHighPassCutoff = 0.0f;
 constexpr float kDefaultBypassHighPassSlope = 0.0f;
 constexpr float kDefaultBypassLowPassCutoff = 1.0f;
 constexpr float kDefaultBypassLowPassSlope = 0.0f;
 constexpr float kDefaultBypassDistortion = 0.0f;
+constexpr float kSingleVoiceFadeSeconds = 0.03f;
 
 float getNormalizedParameterValue(juce::AudioProcessorValueTreeState& parameters,
                                   const juce::StringRef parameterId, float fallbackValue) {
@@ -30,7 +33,7 @@ float getNormalizedParameterValue(juce::AudioProcessorValueTreeState& parameters
     return fallbackValue;
 }
 
-bool getBoolParameterValue(juce::AudioProcessorValueTreeState& parameters,
+bool getBoolParameterValue(const juce::AudioProcessorValueTreeState& parameters,
                            const juce::StringRef parameterId, bool fallbackValue) {
     if (auto* parameter = parameters.getRawParameterValue(parameterId)) {
         return parameter->load() >= 0.5f;
@@ -107,6 +110,11 @@ AdaptiveEchoAudioProcessor::createParameterLayout() {
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         adaptive_echo::plugin_parameters::kOscBPitchTrackId, "Osc B Pitch Track",
         kDefaultOscBPitchTrack));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        adaptive_echo::plugin_parameters::kSingleVoiceId, "Single Voice", kDefaultSingleVoice));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        adaptive_echo::plugin_parameters::kConstantVelocityId, "Constant Velocity",
+        kDefaultConstantVelocity));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         adaptive_echo::plugin_parameters::kPreHighPassCutoffId, "Pre High-Pass Cutoff",
         normalizedRange, kDefaultBypassHighPassCutoff));
@@ -458,6 +466,22 @@ float AdaptiveEchoAudioProcessor::getReferenceFrequency() const {
     return kDefaultReferenceFrequencyHz;
 }
 
+bool AdaptiveEchoAudioProcessor::isSingleVoiceEnabled() const {
+    return getBoolParameterValue(parameters, adaptive_echo::plugin_parameters::kSingleVoiceId,
+                                 kDefaultSingleVoice);
+}
+
+bool AdaptiveEchoAudioProcessor::isConstantVelocityEnabled() const {
+    return getBoolParameterValue(parameters, adaptive_echo::plugin_parameters::kConstantVelocityId,
+                                 kDefaultConstantVelocity);
+}
+
+void AdaptiveEchoAudioProcessor::startVoiceRelease(ActiveVoice& voice) {
+    const auto fadeSamples =
+        std::max(1.0, currentSampleRate * static_cast<double>(kSingleVoiceFadeSeconds));
+    voice.releaseStep = voice.gain / static_cast<float>(fadeSamples);
+}
+
 void AdaptiveEchoAudioProcessor::startVoice(int midiNote, float velocity) {
     auto settings = getCurrentSettingsSnapshot();
     disableSynthEffects(settings);
@@ -486,9 +510,16 @@ void AdaptiveEchoAudioProcessor::startVoice(int midiNote, float velocity) {
     adaptive_echo::applyFilters(postDistortionFilters, rendered,
                                 static_cast<float>(currentSampleRate));
 
+    if (isSingleVoiceEnabled()) {
+        for (auto& activeVoice : activeVoices) {
+            startVoiceRelease(activeVoice);
+        }
+    }
+
     ActiveVoice voice;
     voice.samples = std::move(rendered);
-    voice.velocity = velocity;
+    voice.velocity = isConstantVelocityEnabled() ? 1.0f : velocity;
+    voice.gain = 1.0f;
     voice.order = ++voiceCounter;
 
     if (activeVoices.size() >= static_cast<size_t>(maxPolyphony)) {
@@ -515,15 +546,19 @@ void AdaptiveEchoAudioProcessor::mixActiveVoices(juce::AudioBuffer<float>& buffe
         const auto blockSamples = std::min(numSamples, remaining);
 
         for (size_t i = 0; i < blockSamples; ++i) {
-            const auto sample = voice->samples[voice->position + i] * voice->velocity;
+            const auto sample = voice->samples[voice->position + i] * voice->velocity * voice->gain;
             left[i] += sample;
             if (right != nullptr) {
                 right[i] += sample;
             }
+
+            if (voice->releaseStep > 0.0f) {
+                voice->gain = std::max(0.0f, voice->gain - voice->releaseStep);
+            }
         }
 
         voice->position += blockSamples;
-        if (voice->position >= voice->samples.size()) {
+        if (voice->position >= voice->samples.size() || voice->gain <= 0.0f) {
             voice = activeVoices.erase(voice);
         } else {
             ++voice;

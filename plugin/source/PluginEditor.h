@@ -36,12 +36,15 @@ class AdaptiveEchoAudioProcessorEditor final : public juce::AudioProcessorEditor
     juce::Label lowPassSlopeLabel;
     juce::Label distortionLabel;
     juce::Label keyboardLabel;
+    juce::Label behaviorLabel;
     double trainingProgressValue = 0.0;
     juce::ProgressBar trainingProgressBar{trainingProgressValue};
     juce::Slider trainingTimeSlider;
     juce::Slider referenceFrequencySlider;
     juce::ToggleButton oscAPitchTrackToggle{"Track A"};
     juce::ToggleButton oscBPitchTrackToggle{"Track B"};
+    juce::ToggleButton singleVoiceToggle{"Single Voice"};
+    juce::ToggleButton constantVelocityToggle{"Constant Velocity"};
     juce::Slider preHighPassCutoffSlider;
     juce::Slider preHighPassSlopeSlider;
     juce::Slider preLowPassCutoffSlider;
@@ -56,6 +59,9 @@ class AdaptiveEchoAudioProcessorEditor final : public juce::AudioProcessorEditor
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> frequencyAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oscAPitchTrackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> oscBPitchTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> singleVoiceAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>
+        constantVelocityAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         preHighPassCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
