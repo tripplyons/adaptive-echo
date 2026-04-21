@@ -100,7 +100,11 @@ AdaptiveEchoAudioProcessorEditor::AdaptiveEchoAudioProcessorEditor(
     addAndMakeVisible(referenceFrequencySlider);
 
     oscAPitchTrackToggle.setColour(juce::ToggleButton::textColourId, kPrimaryText);
+    oscAPitchTrackToggle.setColour(juce::ToggleButton::tickColourId, kAccentBlueDark);
+    oscAPitchTrackToggle.setColour(juce::ToggleButton::tickDisabledColourId, kSecondaryText);
     oscBPitchTrackToggle.setColour(juce::ToggleButton::textColourId, kPrimaryText);
+    oscBPitchTrackToggle.setColour(juce::ToggleButton::tickColourId, kAccentBlueDark);
+    oscBPitchTrackToggle.setColour(juce::ToggleButton::tickDisabledColourId, kSecondaryText);
     addAndMakeVisible(oscAPitchTrackToggle);
     addAndMakeVisible(oscBPitchTrackToggle);
 
