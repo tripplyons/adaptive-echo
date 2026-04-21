@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -56,14 +57,14 @@ TrainingResult train_synth(
     int population_size = kDefaultCRFMNESPopulationSize,
     float initial_sigma = kDefaultCRFMNESInitialSigma, float time_limit = 60.0f,
     bool verbose = false,
-    TrainingProgressCallback progress_callback = {});
+    TrainingProgressCallback progress_callback = {}, uint32_t loss_seed = 0);
 
 TrainingResult train_synth_with_coarse_options(
     const std::vector<float>& target_audio, const CoarseSearchOptions& coarse_options,
     int population_size = kDefaultCRFMNESPopulationSize,
     float initial_sigma = kDefaultCRFMNESInitialSigma, float time_limit = 60.0f,
     bool verbose = false,
-    TrainingProgressCallback progress_callback = {});
+    TrainingProgressCallback progress_callback = {}, uint32_t loss_seed = 0);
 
 std::string serialize_settings(const std::vector<float>& settings);
 

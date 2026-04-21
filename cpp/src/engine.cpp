@@ -199,6 +199,21 @@ float hz_to_filter_normalized(float cutoff_hz) {
 
 float elapsed_seconds_since(const std::chrono::steady_clock::time_point& start_time);
 
+uint32_t make_loss_seed(uint32_t requested_seed) {
+    if (requested_seed != 0) {
+        return requested_seed;
+    }
+
+    std::random_device device;
+    const uint32_t seed = device();
+    if (seed != 0) {
+        return seed;
+    }
+
+    return static_cast<uint32_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
 void normalize_audio(std::vector<float>& audio, float target_peak) {
     float max_value = 0.0f;
     for (float sample : audio) {
@@ -882,10 +897,11 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
                                                const CoarseSearchOptions& coarse_options,
                                                int population_size, float initial_sigma,
                                                float time_limit, bool verbose,
-                                               TrainingProgressCallback progress_callback) {
+                                               TrainingProgressCallback progress_callback,
+                                               uint32_t loss_seed) {
     const auto global_start = std::chrono::steady_clock::now();
     const auto time = make_time_axis(constants::NUM_SECONDS, constants::TRAINING_SAMPLE_RATE);
-    LossFunction<float> full_loss_fn(target_audio);
+    LossFunction<float> full_loss_fn(target_audio, make_loss_seed(loss_seed));
     const auto summary = summarize_target_audio(target_audio, full_loss_fn.features());
     const auto summary_seed = make_seed_from_summary(summary);
     const int effective_population =
@@ -951,10 +967,10 @@ TrainingResult train_synth_with_coarse_options(const std::vector<float>& target_
 
 TrainingResult train_synth(const std::vector<float>& target_audio, int population_size,
                            float initial_sigma, float time_limit, bool verbose,
-                           TrainingProgressCallback progress_callback) {
+                           TrainingProgressCallback progress_callback, uint32_t loss_seed) {
     return train_synth_with_coarse_options(target_audio, CoarseSearchOptions {}, population_size,
                                            initial_sigma, time_limit, verbose,
-                                           std::move(progress_callback));
+                                           std::move(progress_callback), loss_seed);
 }
 
 std::string serialize_settings(const std::vector<float>& settings) {

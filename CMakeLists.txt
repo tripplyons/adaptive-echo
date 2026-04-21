@@ -133,3 +133,15 @@ target_link_libraries(compare_optimizers
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+add_executable(loss_smoke_test
+    cpp/tests/loss_smoke_test.cpp
+)
+
+target_link_libraries(loss_smoke_test
+    PRIVATE
+        adaptive_echo_engine
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)

@@ -1,702 +1,143 @@
 #pragma once
 
-/**
- * Optimized STFT-based audio loss functions for adaptive_echo.
- * Parallelized and vectorized for maximum performance.
- *
- * Features:
- * - OpenMP parallelization across STFT frames
- * - Fixed-position STFT with 1/4 window hop for deterministic evaluation
- * - Precomputed target STFTs at multiple scales and resolutions
- * - SIMD vectorization using compiler intrinsics
- * - Thread-safe loss computation for parallel DE evaluation
- * - Precomputed FFT twiddle factors and bit-reversal tables
- */
-
 #include <pocketfft_hdronly.h>
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <complex>
-#include <cstring>
+#include <cstddef>
+#include <cstdint>
+#include <numeric>
+#include <optional>
+#include <random>
 #include <vector>
 
 #include "adaptive_echo/constants.hpp"
-#include "constants.hpp"
-
-// SIMD intrinsics support
-#if defined(__AVX2__)
-#include <immintrin.h>
-#define HAS_AVX2 1
-#elif defined(__AVX__)
-#include <immintrin.h>
-#define HAS_AVX 1
-#elif defined(__SSE4_2__)
-#include <nmmintrin.h>
-#define HAS_SSE42 1
-#elif defined(__SSE2__)
-#include <emmintrin.h>
-#define HAS_SSE2 1
-#endif
-
-// OpenMP support
-#if defined(_OPENMP)
-#include <omp.h>
-#define HAS_OPENMP 1
-#endif
 
 namespace adaptive_echo {
 
+enum class RandomWindowType {
+    Hann,
+    Hamming,
+    Blackman,
+    Kaiser,
+    Tukey,
+    Gaussian,
+};
+
+enum class RandomCepstralFeatureFamily {
+    FullSpectrum,
+    LogBands,
+};
+
+template <typename T>
+struct RandomWindowSpec {
+    size_t fft_size = 0;
+    size_t offset = 0;
+    RandomWindowType window_type = RandomWindowType::Hann;
+    T parameter = static_cast<T>(0);
+};
+
+template <typename T>
+struct RandomCepstralFeatureSpec {
+    RandomCepstralFeatureFamily family = RandomCepstralFeatureFamily::FullSpectrum;
+    size_t coefficient = 0;
+    size_t band_count = 0;
+    T weight = static_cast<T>(1);
+};
+
+template <typename T>
+struct RandomLossWindow {
+    RandomWindowSpec<T> window;
+    std::vector<RandomCepstralFeatureSpec<T>> features;
+};
+
+template <typename T>
+struct RandomLossSchedule {
+    std::vector<RandomLossWindow<T>> windows;
+};
+
+template <typename T>
+struct TargetFeaturesFast {
+    std::vector<T> target_audio;
+    std::vector<size_t> fft_sizes;
+    std::vector<size_t> num_freqs;
+    std::vector<size_t> num_frames;
+    std::vector<std::vector<T>> stfts;
+};
+
 namespace detail {
-/**
- * Thread-local scratch buffer pool for STFT computation.
- * Prevents allocation overhead during parallel processing.
- */
+
+inline constexpr size_t kRandomWindowCount = 100;
+inline constexpr size_t kRandomFeaturesPerWindow = 16;
+inline constexpr size_t kFullSpectrumCoeffLimit = 64;
+inline constexpr std::array<size_t, 5> kFftCandidates = {256, 512, 1024, 2048, 4096};
+
 template <typename T>
-class ScratchBufferPool {
-   public:
-    static ScratchBufferPool& instance() {
-        static ScratchBufferPool pool;
-        return pool;
-    }
-
-    std::vector<std::complex<T>> acquire(size_t size) {
-        thread_local std::vector<std::complex<T>> buffer;
-        if (buffer.size() < size) {
-            buffer.resize(size);
-        }
-        return buffer;
-    }
-
-   private:
-    ScratchBufferPool() = default;
-};
-
-/**
- * Precomputed Hann window cache with aligned memory.
- */
-template <typename T>
-class WindowCache {
-   public:
-    static const std::vector<T>& get(size_t size) {
-        static std::vector<std::vector<T>> cache;
-        if (cache.size() <= size) {
-            cache.resize(size + 1);
-        }
-        if (cache[size].empty()) {
-            cache[size].resize(size);
-            const T TWO_PI = static_cast<T>(2.0 * M_PI);
-            for (size_t i = 0; i < size; ++i) {
-                cache[size][i] = static_cast<T>(0.5) *
-                                 (static_cast<T>(1.0) -
-                                  std::cos(TWO_PI * static_cast<T>(i) / static_cast<T>(size - 1)));
-            }
-        }
-        return cache[size];
-    }
-
-    static T get_sum(size_t size) {
-        const auto& window = get(size);
-        T sum = 0;
-        for (T v : window) sum += v;
-        return sum;
-    }
-};
-
-/**
- * Vectorized mean calculation using SIMD where available.
- */
-template <typename T>
-inline T vectorized_mean(const std::vector<T>& data) {
-    if (data.empty()) return static_cast<T>(0);
-
-    T sum = 0;
-    const size_t n = data.size();
-
-#if defined(HAS_AVX2) && defined(__AVX2__)
-    // AVX2: Process 8 floats at a time
-    if constexpr (std::is_same_v<T, float>) {
-        __m256 sum_vec = _mm256_setzero_ps();
-        size_t i = 0;
-        for (; i + 7 < n; i += 8) {
-            __m256 vec = _mm256_loadu_ps(&data[i]);
-            sum_vec = _mm256_add_ps(sum_vec, vec);
-        }
-
-        // Horizontal sum
-        float sum_arr[8];
-        _mm256_storeu_ps(sum_arr, sum_vec);
-        for (int j = 0; j < 8; ++j) sum += sum_arr[j];
-
-        // Remainder
-        for (; i < n; ++i) sum += data[i];
-        return sum / static_cast<T>(n);
-    }
-#elif defined(HAS_SSE2) && defined(__SSE2__)
-    // SSE2: Process 4 floats at a time
-    if constexpr (std::is_same_v<T, float>) {
-        __m128 sum_vec = _mm_setzero_ps();
-        size_t i = 0;
-        for (; i + 3 < n; i += 4) {
-            __m128 vec = _mm_loadu_ps(&data[i]);
-            sum_vec = _mm_add_ps(sum_vec, vec);
-        }
-
-        // Horizontal sum
-        float sum_arr[4];
-        _mm_storeu_ps(sum_arr, sum_vec);
-        for (int j = 0; j < 4; ++j) sum += sum_arr[j];
-
-        // Remainder
-        for (; i < n; ++i) sum += data[i];
-        return sum / static_cast<T>(n);
-    }
-#endif
-
-// Fallback: OpenMP SIMD
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : sum)
-#endif
-    for (size_t i = 0; i < n; ++i) {
-        sum += data[i];
-    }
-
-    return sum / static_cast<T>(n);
+inline T clamp_epsilon(T value, T epsilon = static_cast<T>(1e-8)) {
+    return std::max(value, epsilon);
 }
 
-/**
- * Vectorized variance calculation.
- */
 template <typename T>
-inline T vectorized_variance(const std::vector<T>& data, T mean) {
-    if (data.size() < 2) return static_cast<T>(0);
-
-    T var = 0;
-    const size_t n = data.size();
-
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : var)
-#endif
-    for (size_t i = 0; i < n; ++i) {
-        T diff = data[i] - mean;
-        var += diff * diff;
-    }
-
-    return var / static_cast<T>(n);
+inline uint64_t mix_seed(T base_seed, uint64_t counter) {
+    uint64_t x = (static_cast<uint64_t>(base_seed) << 32) ^ counter ^ 0x9e3779b97f4a7c15ULL;
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
 }
 
-/**
- * Single STFT frame computation using pocketfft.
- * Thread-safe: each call allocates its own buffer to avoid thread conflicts.
- */
 template <typename T>
-inline void compute_stft_frame(const std::vector<T>& x, const std::vector<T>& window, size_t frame,
-                               size_t start, size_t win_length, size_t n_fft, size_t num_freqs,
-                               T* result) {
-    using complex_t = std::complex<T>;
-
-    // Allocate buffer locally - OpenMP ensures each thread has its own
-    std::vector<complex_t> frame_data(n_fft);
-    std::vector<complex_t> fft_output(n_fft);
-
-    // Window and zero-pad
-    for (size_t i = 0; i < n_fft; ++i) {
-        if (i < win_length && start + i < x.size()) {
-            frame_data[i] = complex_t(x[start + i] * window[i], 0);
-        } else {
-            frame_data[i] = complex_t(0, 0);
+inline std::vector<size_t> valid_fft_sizes(size_t signal_length) {
+    std::vector<size_t> sizes;
+    sizes.reserve(kFftCandidates.size());
+    const size_t min_fft = kFftCandidates.front();
+    const size_t effective_length = std::max(signal_length, min_fft);
+    for (size_t fft_size : kFftCandidates) {
+        if (fft_size <= effective_length) {
+            sizes.push_back(fft_size);
         }
     }
-
-    // FFT using pocketfft
-    pocketfft::shape_t shape{n_fft};
-    pocketfft::stride_t stride_in{sizeof(complex_t)};
-    pocketfft::stride_t stride_out{sizeof(complex_t)};
-    pocketfft::shape_t axes{0};  // Transform along axis 0
-    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true, frame_data.data(),
-                      fft_output.data(), T(1));
-
-    // Store magnitudes with window normalization
-    // FFT normalization: 1.0 / sum(window) for magnitude spectrum
-    T window_sum = WindowCache<T>::get_sum(win_length);
-    T scale = static_cast<T>(1.0) / window_sum;
-    size_t offset = frame * num_freqs;
-    for (size_t freq = 0; freq < num_freqs; ++freq) {
-        result[offset + freq] = std::abs(fft_output[freq]) * scale;
+    if (sizes.empty()) {
+        sizes.push_back(min_fft);
     }
+    return sizes;
 }
 
-/**
- * Generate fixed sampling positions for a given window size and signal length.
- * Uses hop = win_length / 4 for evenly spaced coverage.
- * Positions are deterministic and consistent across calls.
- */
-template <typename T>
-inline std::vector<size_t> generate_fixed_positions(size_t signal_length, size_t win_length) {
-    std::vector<size_t> positions;
-
-    if (signal_length < win_length) {
-        return positions;
-    }
-
-    // Hop size = win_length / 4 (25% overlap)
-    size_t hop = win_length / 4;
-    if (hop == 0) hop = 1;
-
-    // Generate positions starting at 0, with fixed hop
-    for (size_t start = 0; start + win_length <= signal_length; start += hop) {
-        positions.push_back(start);
-    }
-
-    return positions;
-}
-
-/**
- * STFT with fixed sampling positions (hop = win_length / 4).
- * Layout: [frame][freq] for cache locality.
- * Deterministic and consistent across calls.
- */
-template <typename T>
-inline std::vector<T> stft_fixed(const std::vector<T>& x, size_t win_length, size_t n_fft,
-                                 std::vector<size_t>& out_positions) {
-    const auto& window = WindowCache<T>::get(win_length);
-    size_t num_freqs = n_fft / 2 + 1;
-
-    // Generate fixed positions
-    out_positions = generate_fixed_positions<T>(x.size(), win_length);
-    size_t num_frames = out_positions.size();
-
-    if (num_frames == 0) {
-        return std::vector<T>();
-    }
-
-    std::vector<T> result(num_frames * num_freqs);
-
-#if defined(HAS_OPENMP)
-#pragma omp parallel for schedule(dynamic, 4)
-#endif
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        size_t start = out_positions[frame];
-        compute_stft_frame(x, window, frame, start, win_length, n_fft, num_freqs, result.data());
-    }
-
-    return result;
-}
-
-/**
- * Compute STFT with explicit positions.
- * Used to ensure generated uses same positions as precomputed target.
- */
-template <typename T>
-inline std::vector<T> stft_with_positions(const std::vector<T>& x, size_t win_length, size_t n_fft,
-                                          const std::vector<size_t>& positions) {
-    const auto& window = WindowCache<T>::get(win_length);
-    size_t num_freqs = n_fft / 2 + 1;
-    size_t num_frames = positions.size();
-
-    if (num_frames == 0) {
-        return std::vector<T>();
-    }
-
-    std::vector<T> result(num_frames * num_freqs);
-
-#if defined(HAS_OPENMP)
-#pragma omp parallel for schedule(dynamic, 4)
-#endif
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        size_t start = positions[frame];
-        // Clamp start position to valid range
-        size_t max_start = (x.size() >= win_length) ? x.size() - win_length : 0;
-        if (start > max_start) start = max_start;
-        compute_stft_frame(x, window, frame, start, win_length, n_fft, num_freqs, result.data());
-    }
-
-    return result;
-}
-
-/**
- * Compute perceptual frequency weights (A-weighting + Mel-scale density).
- * Used to give "fair weight" to each frequency in audio similarity loss.
- */
 template <typename T>
 inline std::vector<T> compute_frequency_weights(size_t num_freqs, size_t n_fft, T sample_rate) {
-    std::vector<T> weights(num_freqs);
+    std::vector<T> weights(num_freqs, static_cast<T>(1));
     const T f_s = sample_rate;
     const T n_f = static_cast<T>(n_fft);
 
     for (size_t i = 0; i < num_freqs; ++i) {
-        T freq = static_cast<T>(i) * f_s / n_f;
-
-        // A-weighting approximation
-        T f2 = freq * freq;
-        T f4 = f2 * f2;
-        T c1 = static_cast<T>(12194.217 * 12194.217);
-        T c2 = static_cast<T>(20.601103 * 20.601103);
-        T c3 = static_cast<T>(107.65265 * 107.65265);
-        T c4 = static_cast<T>(737.86223 * 737.86223);
-
-        T num = c1 * f4;
-        T den = (f2 + c2) * std::sqrt((f2 + c3) * (f2 + c4)) * (f2 + c1);
-        T ra = num / (den + static_cast<T>(1e-8));
-
-        // Mel-scale slope to balance linear bin density
-        // dMel/df = 1 / (1 + f/700)
-        T mel_slope = static_cast<T>(1.0) / (static_cast<T>(1.0) + freq / static_cast<T>(700.0));
-
-        weights[i] = ra * mel_slope;
+        const T freq = static_cast<T>(i) * f_s / n_f;
+        const T f2 = freq * freq;
+        const T f4 = f2 * f2;
+        const T c1 = static_cast<T>(12194.217 * 12194.217);
+        const T c2 = static_cast<T>(20.601103 * 20.601103);
+        const T c3 = static_cast<T>(107.65265 * 107.65265);
+        const T c4 = static_cast<T>(737.86223 * 737.86223);
+        const T numerator = c1 * f4;
+        const T denominator =
+            (f2 + c2) * std::sqrt((f2 + c3) * (f2 + c4)) * (f2 + c1) + static_cast<T>(1e-8);
+        const T a_weight = numerator / denominator;
+        const T mel_slope =
+            static_cast<T>(1) / (static_cast<T>(1) + freq / static_cast<T>(700));
+        weights[i] = a_weight * mel_slope;
     }
 
-    // Normalize weights to average 1.0 to maintain loss scale
-    T sum = 0;
-    for (T w : weights) sum += w;
-    T inv_mean = static_cast<T>(num_freqs) / (sum + static_cast<T>(1e-8));
-    for (size_t i = 0; i < num_freqs; ++i) {
-        weights[i] *= inv_mean;
+    const T sum = std::accumulate(weights.begin(), weights.end(), static_cast<T>(0));
+    if (sum > static_cast<T>(0)) {
+        const T scale = static_cast<T>(num_freqs) / sum;
+        for (T& weight : weights) {
+            weight *= scale;
+        }
     }
 
     return weights;
-}
-
-/**
- * Vectorized zero-crossing rate computation.
- */
-template <typename T>
-inline T zero_crossing_rate_fast(const std::vector<T>& x) {
-    if (x.size() < 2) return static_cast<T>(0);
-
-    size_t count = 0;
-    const size_t n = x.size();
-
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : count)
-#endif
-    for (size_t i = 1; i < n; ++i) {
-        count += (x[i] * x[i - 1] < 0) ? 1 : 0;
-    }
-
-    return static_cast<T>(count) / static_cast<T>(n - 1);
-}
-
-/**
- * Vectorized spectral convergence loss with frequency weighting.
- */
-template <typename T>
-inline T spectral_convergence_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag,
-                                   T y_mag_mean, const std::vector<T>& weights, size_t num_freqs) {
-    const size_t n = x_mag.size();
-    if (n == 0 || num_freqs == 0) return static_cast<T>(0);
-
-    T inv_y_mean = static_cast<T>(1.0) / (y_mag_mean + static_cast<T>(1e-8));
-    size_t num_frames = n / num_freqs;
-
-    T sc_loss = 0;
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* x_ptr = &x_mag[frame * num_freqs];
-        const T* y_ptr = &y_mag[frame * num_freqs];
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : sc_loss)
-#endif
-        for (size_t freq = 0; freq < num_freqs; ++freq) {
-            sc_loss += weights[freq] * std::abs(y_ptr[freq] - x_ptr[freq]) * inv_y_mean;
-        }
-    }
-
-    return sc_loss / static_cast<T>(n);
-}
-
-/**
- * Vectorized log-magnitude loss with frequency weighting.
- */
-template <typename T>
-inline T log_magnitude_loss(const std::vector<T>& x_mag, const std::vector<T>& y_mag,
-                            const std::vector<T>& weights, size_t num_freqs) {
-    const size_t n = x_mag.size();
-    if (n == 0 || num_freqs == 0) return static_cast<T>(0);
-
-    constexpr T EPSILON = static_cast<T>(1e-8);
-    size_t num_frames = n / num_freqs;
-
-    T mag_loss = 0;
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* x_ptr = &x_mag[frame * num_freqs];
-        const T* y_ptr = &y_mag[frame * num_freqs];
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : mag_loss)
-#endif
-        for (size_t freq = 0; freq < num_freqs; ++freq) {
-            T log_y = std::log(y_ptr[freq] + EPSILON);
-            T log_x = std::log(x_ptr[freq] + EPSILON);
-            mag_loss += weights[freq] * std::abs(log_y - log_x);
-        }
-    }
-
-    return mag_loss / static_cast<T>(n);
-}
-
-template <typename T>
-inline std::vector<T> center_log_spectrogram(const std::vector<T>& spec, size_t num_features) {
-    if (spec.empty() || num_features == 0) {
-        return {};
-    }
-
-    constexpr T epsilon = static_cast<T>(1e-8);
-    const size_t num_frames = spec.size() / num_features;
-    std::vector<T> centered(spec.size(), static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* src_ptr = &spec[frame * num_features];
-        T* dst_ptr = &centered[frame * num_features];
-        T mean = static_cast<T>(0);
-        for (size_t feature = 0; feature < num_features; ++feature) {
-            dst_ptr[feature] = std::log(src_ptr[feature] + epsilon);
-            mean += dst_ptr[feature];
-        }
-        mean /= static_cast<T>(num_features);
-#if defined(HAS_OPENMP)
-#pragma omp simd
-#endif
-        for (size_t feature = 0; feature < num_features; ++feature) {
-            dst_ptr[feature] -= mean;
-        }
-    }
-
-    return centered;
-}
-
-template <typename T>
-inline std::vector<T> log_spectral_delta(const std::vector<T>& spec, size_t num_features) {
-    if (spec.empty() || num_features < 2) {
-        return {};
-    }
-
-    constexpr T epsilon = static_cast<T>(1e-8);
-    const size_t num_frames = spec.size() / num_features;
-    std::vector<T> deltas(num_frames * (num_features - 1), static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* src_ptr = &spec[frame * num_features];
-        T* dst_ptr = &deltas[frame * (num_features - 1)];
-#if defined(HAS_OPENMP)
-#pragma omp simd
-#endif
-        for (size_t feature = 1; feature < num_features; ++feature) {
-            dst_ptr[feature - 1] =
-                std::log(src_ptr[feature] + epsilon) - std::log(src_ptr[feature - 1] + epsilon);
-        }
-    }
-
-    return deltas;
-}
-
-template <typename T>
-inline std::vector<T> adjacent_feature_weights(const std::vector<T>& weights) {
-    if (weights.size() < 2) {
-        return {};
-    }
-
-    std::vector<T> adjacent(weights.size() - 1, static_cast<T>(0));
-    for (size_t i = 1; i < weights.size(); ++i) {
-        adjacent[i - 1] = static_cast<T>(0.5) * (weights[i - 1] + weights[i]);
-    }
-    return adjacent;
-}
-
-template <typename T>
-inline T weighted_l1_loss(const std::vector<T>& x, const std::vector<T>& y,
-                          const std::vector<T>& weights, size_t num_features) {
-    const size_t n = x.size();
-    if (n == 0 || n != y.size() || num_features == 0) return static_cast<T>(0);
-
-    const size_t num_frames = n / num_features;
-    T loss = static_cast<T>(0);
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* x_ptr = &x[frame * num_features];
-        const T* y_ptr = &y[frame * num_features];
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : loss)
-#endif
-        for (size_t feature = 0; feature < num_features; ++feature) {
-            loss += weights[feature] * std::abs(x_ptr[feature] - y_ptr[feature]);
-        }
-    }
-
-    return loss / static_cast<T>(n);
-}
-
-template <typename T>
-inline T l1_loss(const std::vector<T>& x, const std::vector<T>& y) {
-    const size_t n = std::min(x.size(), y.size());
-    if (n == 0) return static_cast<T>(0);
-
-    T loss = static_cast<T>(0);
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : loss)
-#endif
-    for (size_t i = 0; i < n; ++i) {
-        loss += std::abs(x[i] - y[i]);
-    }
-
-    return loss / static_cast<T>(n);
-}
-
-template <typename T>
-inline T l2_loss(const std::vector<T>& x, const std::vector<T>& y) {
-    const size_t n = std::min(x.size(), y.size());
-    if (n == 0) return static_cast<T>(0);
-
-    T loss = static_cast<T>(0);
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : loss)
-#endif
-    for (size_t i = 0; i < n; ++i) {
-        const T diff = x[i] - y[i];
-        loss += diff * diff;
-    }
-
-    return loss / static_cast<T>(n);
-}
-
-template <typename T>
-inline std::vector<T> compute_envelope(const std::vector<T>& x, size_t window = 1024,
-                                       size_t hop = 256) {
-    if (x.empty()) {
-        return {};
-    }
-
-    window = std::max<size_t>(1, std::min(window, x.size()));
-    hop = std::max<size_t>(1, hop);
-    const size_t num_frames = 1 + (x.size() - 1) / hop;
-    std::vector<T> envelope(num_frames, static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const size_t start = frame * hop;
-        const size_t end = std::min(start + window, x.size());
-        T sum = static_cast<T>(0);
-
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : sum)
-#endif
-        for (size_t i = start; i < end; ++i) {
-            sum += x[i] * x[i];
-        }
-
-        const T mean = sum / static_cast<T>(std::max<size_t>(1, end - start));
-        envelope[frame] = std::sqrt(mean);
-    }
-
-    return envelope;
-}
-
-template <typename T>
-inline std::vector<T> compute_delta(const std::vector<T>& x) {
-    if (x.size() < 2) {
-        return {};
-    }
-
-    std::vector<T> delta(x.size() - 1, static_cast<T>(0));
-#if defined(HAS_OPENMP)
-#pragma omp simd
-#endif
-    for (size_t i = 1; i < x.size(); ++i) {
-        delta[i - 1] = x[i] - x[i - 1];
-    }
-
-    return delta;
-}
-
-template <typename T>
-inline std::vector<T> compute_windowed_zcr(const std::vector<T>& x, size_t window = 1024,
-                                           size_t hop = 256) {
-    if (x.size() < 2) {
-        return {};
-    }
-
-    window = std::max<size_t>(2, std::min(window, x.size()));
-    hop = std::max<size_t>(1, hop);
-    const size_t num_frames = 1 + (x.size() - 1) / hop;
-    std::vector<T> zcr(num_frames, static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const size_t start = frame * hop;
-        const size_t end = std::min(start + window, x.size());
-        if (end - start < 2) {
-            continue;
-        }
-
-        size_t crossings = 0;
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : crossings)
-#endif
-        for (size_t i = start + 1; i < end; ++i) {
-            const bool crossed = (x[i - 1] >= static_cast<T>(0) && x[i] < static_cast<T>(0)) ||
-                                 (x[i - 1] < static_cast<T>(0) && x[i] >= static_cast<T>(0));
-            crossings += crossed ? 1u : 0u;
-        }
-
-        zcr[frame] = static_cast<T>(crossings) / static_cast<T>(end - start - 1);
-    }
-
-    return zcr;
-}
-
-template <typename T>
-inline std::vector<T> compute_band_centroid_trajectory(const std::vector<T>& band_spec,
-                                                       size_t num_bands) {
-    if (band_spec.empty() || num_bands == 0) {
-        return {};
-    }
-
-    const size_t num_frames = band_spec.size() / num_bands;
-    std::vector<T> centroids(num_frames, static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* band_ptr = &band_spec[frame * num_bands];
-        T weighted_sum = static_cast<T>(0);
-        T magnitude_sum = static_cast<T>(0);
-        for (size_t band = 0; band < num_bands; ++band) {
-            const T magnitude = std::max(band_ptr[band], static_cast<T>(0));
-            weighted_sum += static_cast<T>(band) * magnitude;
-            magnitude_sum += magnitude;
-        }
-        if (magnitude_sum > static_cast<T>(1e-8)) {
-            centroids[frame] = weighted_sum /
-                               (magnitude_sum * static_cast<T>(std::max<size_t>(1, num_bands - 1)));
-        }
-    }
-
-    return centroids;
-}
-
-template <typename T>
-inline std::vector<T> compute_spectral_flux_trajectory(const std::vector<T>& spec,
-                                                       size_t num_features) {
-    if (spec.empty() || num_features == 0) {
-        return {};
-    }
-
-    const size_t num_frames = spec.size() / num_features;
-    if (num_frames < 2) {
-        return {};
-    }
-
-    std::vector<T> flux(num_frames - 1, static_cast<T>(0));
-    constexpr T epsilon = static_cast<T>(1e-8);
-
-    for (size_t frame = 1; frame < num_frames; ++frame) {
-        const T* prev_ptr = &spec[(frame - 1) * num_features];
-        const T* curr_ptr = &spec[frame * num_features];
-        T frame_flux = static_cast<T>(0);
-#if defined(HAS_OPENMP)
-#pragma omp simd reduction(+ : frame_flux)
-#endif
-        for (size_t feature = 0; feature < num_features; ++feature) {
-            const T prev_log = std::log(prev_ptr[feature] + epsilon);
-            const T curr_log = std::log(curr_ptr[feature] + epsilon);
-            frame_flux += std::max(static_cast<T>(0), curr_log - prev_log);
-        }
-        flux[frame - 1] = frame_flux / static_cast<T>(num_features);
-    }
-
-    return flux;
 }
 
 template <typename T>
@@ -707,525 +148,637 @@ inline std::vector<size_t> compute_log_band_edges(size_t num_freqs, size_t num_b
 
     num_bands = std::max<size_t>(1, std::min(num_bands, num_freqs));
     std::vector<size_t> edges(num_bands + 1);
-    edges[0] = 0;
-    edges[num_bands] = num_freqs;
-
+    edges.front() = 0;
+    edges.back() = num_freqs;
     if (num_bands == 1) {
         return edges;
     }
 
     const T min_bin = static_cast<T>(1);
     const T max_bin = static_cast<T>(std::max<size_t>(1, num_freqs - 1));
-
     for (size_t band = 1; band < num_bands; ++band) {
         const T alpha = static_cast<T>(band) / static_cast<T>(num_bands);
         const T log_bin = std::exp(std::log(min_bin) +
                                    alpha * (std::log(max_bin) - std::log(min_bin)));
-        const size_t edge = static_cast<size_t>(std::round(log_bin));
-        edges[band] = std::clamp(edge, edges[band - 1] + 1, num_freqs - (num_bands - band));
+        edges[band] = static_cast<size_t>(std::round(log_bin));
+        edges[band] = std::clamp(edges[band], edges[band - 1] + 1, num_freqs - (num_bands - band));
     }
-
     return edges;
-}
-
-template <typename T>
-inline std::vector<T> band_average_spectrogram(const std::vector<T>& spec, size_t num_freqs,
-                                               const std::vector<size_t>& band_edges,
-                                               const std::vector<T>& freq_weights) {
-    if (spec.empty() || num_freqs == 0 || band_edges.size() < 2 || freq_weights.size() != num_freqs) {
-        return {};
-    }
-
-    const size_t num_frames = spec.size() / num_freqs;
-    const size_t num_bands = band_edges.size() - 1;
-    std::vector<T> band_spec(num_frames * num_bands, static_cast<T>(0));
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* frame_ptr = &spec[frame * num_freqs];
-        T* band_ptr = &band_spec[frame * num_bands];
-
-        for (size_t band = 0; band < num_bands; ++band) {
-            const size_t start = band_edges[band];
-            const size_t end = band_edges[band + 1];
-            T sum = static_cast<T>(0);
-            T weight_sum = static_cast<T>(0);
-            for (size_t freq = start; freq < end; ++freq) {
-                sum += frame_ptr[freq] * freq_weights[freq];
-                weight_sum += freq_weights[freq];
-            }
-            if (weight_sum > static_cast<T>(0)) {
-                band_ptr[band] = sum / weight_sum;
-            } else {
-                band_ptr[band] = sum / static_cast<T>(std::max<size_t>(1, end - start));
-            }
-        }
-    }
-
-    return band_spec;
 }
 
 template <typename T>
 inline std::vector<T> aggregate_band_weights(const std::vector<T>& freq_weights,
                                              const std::vector<size_t>& band_edges) {
-    if (band_edges.size() < 2) {
-        return {};
-    }
-
-    const size_t num_bands = band_edges.size() - 1;
+    const size_t num_bands = band_edges.size() > 1 ? band_edges.size() - 1 : 0;
     std::vector<T> band_weights(num_bands, static_cast<T>(0));
     for (size_t band = 0; band < num_bands; ++band) {
-        const size_t start = band_edges[band];
-        const size_t end = band_edges[band + 1];
         T sum = static_cast<T>(0);
-        for (size_t freq = start; freq < end; ++freq) {
-            sum += freq_weights[freq];
+        for (size_t bin = band_edges[band]; bin < band_edges[band + 1]; ++bin) {
+            sum += freq_weights[bin];
         }
-        // Preserve the full perceptual mass of each band so the coarse losses
-        // reflect how much weighted frequency content the band represents.
         band_weights[band] = sum;
     }
 
-    T total = std::accumulate(band_weights.begin(), band_weights.end(), static_cast<T>(0));
-    if (total > static_cast<T>(0)) {
+    const T total = std::accumulate(band_weights.begin(), band_weights.end(), static_cast<T>(0));
+    if (total > static_cast<T>(0) && num_bands > 0) {
         const T scale = static_cast<T>(num_bands) / total;
         for (T& weight : band_weights) {
             weight *= scale;
         }
     }
-
     return band_weights;
 }
 
 template <typename T>
 inline std::vector<T> perceptual_cepstral_weights(const std::vector<T>& source_weights,
                                                   size_t num_coeffs) {
+    std::vector<T> weights(num_coeffs, static_cast<T>(0));
     if (source_weights.empty() || num_coeffs == 0) {
-        return {};
+        return weights;
     }
 
     const size_t num_bins = source_weights.size();
     const T dct_scale = static_cast<T>(M_PI) / static_cast<T>(num_bins);
-    std::vector<T> weights(num_coeffs, static_cast<T>(0));
-
     for (size_t coeff = 0; coeff < num_coeffs; ++coeff) {
-        T weighted_basis_energy = static_cast<T>(0);
+        T energy = static_cast<T>(0);
         for (size_t bin = 0; bin < num_bins; ++bin) {
-            const T angle = dct_scale * (static_cast<T>(bin) + static_cast<T>(0.5)) *
-                            static_cast<T>(coeff);
-            weighted_basis_energy += source_weights[bin] * std::abs(std::cos(angle));
+            const T angle =
+                dct_scale * (static_cast<T>(bin) + static_cast<T>(0.5)) * static_cast<T>(coeff);
+            energy += source_weights[bin] * std::abs(std::cos(angle));
         }
-        weights[coeff] = weighted_basis_energy / static_cast<T>(num_bins);
+        weights[coeff] = energy / static_cast<T>(num_bins);
     }
 
-    T total = std::accumulate(weights.begin(), weights.end(), static_cast<T>(0));
+    const T total = std::accumulate(weights.begin(), weights.end(), static_cast<T>(0));
     if (total > static_cast<T>(0)) {
         const T scale = static_cast<T>(num_coeffs) / total;
         for (T& weight : weights) {
             weight *= scale;
         }
     }
-
     return weights;
 }
 
 template <typename T>
-inline std::vector<T> weighted_cepstrum_spectrogram(const std::vector<T>& band_spec, size_t num_bands,
-                                                    const std::vector<T>& band_weights,
-                                                    size_t num_coeffs) {
-    if (band_spec.empty() || num_bands == 0 || num_coeffs == 0) {
+inline T bessel_i0(T x) {
+    const T ax = std::abs(x);
+    if (ax < static_cast<T>(3.75)) {
+        const T y = (x / static_cast<T>(3.75));
+        const T y2 = y * y;
+        return static_cast<T>(1.0) +
+               y2 * (static_cast<T>(3.5156229) +
+                     y2 * (static_cast<T>(3.0899424) +
+                           y2 * (static_cast<T>(1.2067492) +
+                                 y2 * (static_cast<T>(0.2659732) +
+                                       y2 * (static_cast<T>(0.0360768) +
+                                             y2 * static_cast<T>(0.0045813))))));
+    }
+
+    const T y = static_cast<T>(3.75) / ax;
+    const T polynomial =
+        static_cast<T>(0.39894228) +
+        y * (static_cast<T>(0.01328592) +
+             y * (static_cast<T>(0.00225319) +
+                  y * (static_cast<T>(-0.00157565) +
+                       y * (static_cast<T>(0.00916281) +
+                            y * (static_cast<T>(-0.02057706) +
+                                 y * (static_cast<T>(0.02635537) +
+                                      y * (static_cast<T>(-0.01647633) +
+                                           y * static_cast<T>(0.00392377))))))));
+    return (std::exp(ax) / std::sqrt(ax)) * polynomial;
+}
+
+template <typename T>
+inline std::vector<T> make_window(const RandomWindowSpec<T>& spec) {
+    std::vector<T> window(spec.fft_size, static_cast<T>(1));
+    if (spec.fft_size <= 1) {
+        return window;
+    }
+
+    const T denom = static_cast<T>(spec.fft_size - 1);
+    const T two_pi = static_cast<T>(2) * static_cast<T>(M_PI);
+    const T mid = denom / static_cast<T>(2);
+
+    switch (spec.window_type) {
+        case RandomWindowType::Hann:
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                window[i] = static_cast<T>(0.5) -
+                            static_cast<T>(0.5) *
+                                std::cos(two_pi * static_cast<T>(i) / denom);
+            }
+            break;
+        case RandomWindowType::Hamming:
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                window[i] = static_cast<T>(0.54) -
+                            static_cast<T>(0.46) *
+                                std::cos(two_pi * static_cast<T>(i) / denom);
+            }
+            break;
+        case RandomWindowType::Blackman:
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                const T phase = two_pi * static_cast<T>(i) / denom;
+                window[i] = static_cast<T>(0.42) - static_cast<T>(0.5) * std::cos(phase) +
+                            static_cast<T>(0.08) * std::cos(static_cast<T>(2) * phase);
+            }
+            break;
+        case RandomWindowType::Kaiser: {
+            const T beta = spec.parameter;
+            const T denom_i0 = std::max(bessel_i0(beta), static_cast<T>(1e-8));
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                const T ratio = (static_cast<T>(2) * static_cast<T>(i) / denom) - static_cast<T>(1);
+                const T inside = std::max(static_cast<T>(0), static_cast<T>(1) - ratio * ratio);
+                window[i] = bessel_i0(beta * std::sqrt(inside)) / denom_i0;
+            }
+            break;
+        }
+        case RandomWindowType::Tukey: {
+            const T alpha = std::clamp(spec.parameter, static_cast<T>(0.1), static_cast<T>(0.9));
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                const T x = static_cast<T>(i) / denom;
+                if (x < alpha / static_cast<T>(2)) {
+                    window[i] = static_cast<T>(0.5) *
+                                (static_cast<T>(1) +
+                                 std::cos(static_cast<T>(M_PI) *
+                                          (static_cast<T>(2) * x / alpha - static_cast<T>(1))));
+                } else if (x <= static_cast<T>(1) - alpha / static_cast<T>(2)) {
+                    window[i] = static_cast<T>(1);
+                } else {
+                    window[i] = static_cast<T>(0.5) *
+                                (static_cast<T>(1) +
+                                 std::cos(static_cast<T>(M_PI) *
+                                          (static_cast<T>(2) * x / alpha -
+                                           static_cast<T>(2) / alpha + static_cast<T>(1))));
+                }
+            }
+            break;
+        }
+        case RandomWindowType::Gaussian: {
+            const T sigma = std::clamp(spec.parameter, static_cast<T>(0.2), static_cast<T>(0.6));
+            const T scale = std::max(sigma * mid, static_cast<T>(1e-8));
+            for (size_t i = 0; i < spec.fft_size; ++i) {
+                const T z = (static_cast<T>(i) - mid) / scale;
+                window[i] = std::exp(static_cast<T>(-0.5) * z * z);
+            }
+            break;
+        }
+    }
+
+    return window;
+}
+
+template <typename T>
+inline std::vector<T> compute_windowed_magnitude_spectrum(const std::vector<T>& audio,
+                                                          const RandomWindowSpec<T>& spec) {
+    using complex_t = std::complex<T>;
+
+    const auto window = make_window(spec);
+    std::vector<complex_t> frame(spec.fft_size, complex_t(0, 0));
+    std::vector<complex_t> fft_output(spec.fft_size, complex_t(0, 0));
+    for (size_t i = 0; i < spec.fft_size; ++i) {
+        const size_t index = spec.offset + i;
+        const T sample = index < audio.size() ? audio[index] : static_cast<T>(0);
+        frame[i] = complex_t(sample * window[i], 0);
+    }
+
+    pocketfft::shape_t shape{spec.fft_size};
+    pocketfft::stride_t stride_in{sizeof(complex_t)};
+    pocketfft::stride_t stride_out{sizeof(complex_t)};
+    pocketfft::shape_t axes{0};
+    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true, frame.data(), fft_output.data(),
+                      T(1));
+
+    const size_t num_freqs = spec.fft_size / 2 + 1;
+    std::vector<T> magnitude(num_freqs, static_cast<T>(0));
+    const T window_sum =
+        std::max(std::accumulate(window.begin(), window.end(), static_cast<T>(0)),
+                 static_cast<T>(1e-8));
+    const T scale = static_cast<T>(1) / window_sum;
+    for (size_t bin = 0; bin < num_freqs; ++bin) {
+        magnitude[bin] = std::abs(fft_output[bin]) * scale;
+    }
+    return magnitude;
+}
+
+template <typename T>
+inline std::vector<T> compute_summary_stft(const std::vector<T>& audio, size_t fft_size,
+                                           size_t hop, size_t* num_frames_out = nullptr) {
+    const size_t num_freqs = fft_size / 2 + 1;
+    if (audio.empty()) {
+        if (num_frames_out != nullptr) {
+            *num_frames_out = 0;
+        }
         return {};
     }
 
-    const size_t num_frames = band_spec.size() / num_bands;
-    std::vector<T> cepstra(num_frames * num_coeffs, static_cast<T>(0));
-    constexpr T epsilon = static_cast<T>(1e-8);
-    const T dct_scale = static_cast<T>(M_PI) / static_cast<T>(num_bands);
-
-    for (size_t frame = 0; frame < num_frames; ++frame) {
-        const T* band_ptr = &band_spec[frame * num_bands];
-        T* cep_ptr = &cepstra[frame * num_coeffs];
-
-        for (size_t coeff = 0; coeff < num_coeffs; ++coeff) {
-            T sum = static_cast<T>(0);
-            for (size_t band = 0; band < num_bands; ++band) {
-                const T weighted_log =
-                    std::log(band_ptr[band] * band_weights[band] + epsilon);
-                const T angle =
-                    dct_scale * (static_cast<T>(band) + static_cast<T>(0.5)) * static_cast<T>(coeff);
-                sum += weighted_log * std::cos(angle);
+    std::vector<RandomWindowSpec<T>> frames;
+    if (audio.size() <= fft_size) {
+        frames.push_back(RandomWindowSpec<T> {fft_size, 0, RandomWindowType::Hann, static_cast<T>(0)});
+    } else {
+        hop = std::max<size_t>(1, hop);
+        for (size_t offset = 0; offset < audio.size(); offset += hop) {
+            frames.push_back(
+                RandomWindowSpec<T> {fft_size, std::min(offset, audio.size() - 1), RandomWindowType::Hann,
+                                     static_cast<T>(0)});
+            if (offset + fft_size >= audio.size()) {
+                break;
             }
-            cep_ptr[coeff] = sum / static_cast<T>(num_bands);
         }
     }
 
-    return cepstra;
+    std::vector<T> stft(frames.size() * num_freqs, static_cast<T>(0));
+    for (size_t frame_index = 0; frame_index < frames.size(); ++frame_index) {
+        auto spectrum = compute_windowed_magnitude_spectrum(audio, frames[frame_index]);
+        auto destination =
+            stft.begin() + static_cast<std::ptrdiff_t>(frame_index * num_freqs);
+        std::copy(spectrum.begin(), spectrum.end(), destination);
+    }
+
+    if (num_frames_out != nullptr) {
+        *num_frames_out = frames.size();
+    }
+    return stft;
 }
 
-}  // namespace detail
-
-/**
- * Precomputed target features for the four-part perceptual loss:
- * - fine exact-frequency spectrogram matching over time
- * - coarse band-energy spectrogram matching over time
- * - fine cepstral matching over time
- * - coarse cepstral matching over time
- */
 template <typename T>
-struct TargetFeaturesFast {
-    // Fine-grained target STFTs at each scale [scale][frame * freq]
-    std::vector<std::vector<T>> stfts;
-    std::vector<size_t> fft_sizes;
-    std::vector<size_t> num_freqs;
-    std::vector<size_t> num_frames;
-    std::vector<std::vector<size_t>> positions;
-    std::vector<std::vector<T>> fine_weights;
-    std::vector<std::vector<T>> fine_cepstra;
-    std::vector<std::vector<T>> fine_cepstral_weights;
-    std::vector<size_t> num_fine_cepstra;
-    std::vector<std::vector<T>> fine_centered_logs;
-    std::vector<std::vector<T>> fine_log_deltas;
-    std::vector<std::vector<T>> fine_delta_weights;
+inline std::vector<T> compute_band_spectrum(const std::vector<T>& magnitude,
+                                            const std::vector<size_t>& band_edges,
+                                            const std::vector<T>& freq_weights) {
+    const size_t num_bands = band_edges.size() > 1 ? band_edges.size() - 1 : 0;
+    std::vector<T> bands(num_bands, static_cast<T>(0));
+    for (size_t band = 0; band < num_bands; ++band) {
+        const size_t start = band_edges[band];
+        const size_t end = band_edges[band + 1];
+        T weighted_sum = static_cast<T>(0);
+        T weight_sum = static_cast<T>(0);
+        for (size_t bin = start; bin < end; ++bin) {
+            weighted_sum += magnitude[bin] * freq_weights[bin];
+            weight_sum += freq_weights[bin];
+        }
+        const size_t width = std::max<size_t>(1, end - start);
+        bands[band] = weight_sum > static_cast<T>(0) ? weighted_sum / weight_sum
+                                                     : weighted_sum / static_cast<T>(width);
+    }
+    return bands;
+}
 
-    // Coarse-grained band trajectories and cepstra at each scale
-    std::vector<std::vector<T>> band_stfts;
-    std::vector<std::vector<size_t>> band_edges;
-    std::vector<std::vector<T>> band_weights;
-    std::vector<size_t> num_bands;
-    std::vector<std::vector<T>> cepstra;
-    std::vector<std::vector<T>> cepstral_weights;
-    std::vector<size_t> num_cepstra;
-    std::vector<std::vector<T>> band_centered_logs;
-    std::vector<std::vector<T>> band_log_deltas;
-    std::vector<std::vector<T>> band_delta_weights;
+template <typename T>
+inline T compute_weighted_cepstral_coefficient(const std::vector<T>& spectrum,
+                                               const std::vector<T>& weights,
+                                               size_t coefficient) {
+    if (spectrum.empty() || spectrum.size() != weights.size()) {
+        return static_cast<T>(0);
+    }
 
-    // Global envelope-shape features, normalized to focus on contour.
-    std::vector<T> envelope;
-    std::vector<T> envelope_delta;
-    std::vector<T> zcr;
-    std::vector<T> zcr_delta;
-    std::vector<std::vector<T>> band_centroids;
-    std::vector<std::vector<T>> band_flux;
+    const size_t count = spectrum.size();
+    const T dct_scale = static_cast<T>(M_PI) / static_cast<T>(count);
+    T sum = static_cast<T>(0);
+    for (size_t i = 0; i < count; ++i) {
+        const T weighted_log = std::log(clamp_epsilon(spectrum[i] * weights[i]));
+        const T angle =
+            dct_scale * (static_cast<T>(i) + static_cast<T>(0.5)) * static_cast<T>(coefficient);
+        sum += weighted_log * std::cos(angle);
+    }
+    return sum / static_cast<T>(count);
+}
+
+template <typename T>
+inline RandomWindowType sample_window_type(std::mt19937_64& rng) {
+    std::uniform_int_distribution<int> distribution(0, 5);
+    return static_cast<RandomWindowType>(distribution(rng));
+}
+
+template <typename T>
+inline RandomWindowSpec<T> sample_window_spec(size_t target_length, std::mt19937_64& rng) {
+    const auto sizes = valid_fft_sizes<T>(target_length);
+    std::uniform_int_distribution<size_t> fft_distribution(0, sizes.size() - 1);
+    RandomWindowSpec<T> spec;
+    spec.fft_size = sizes[fft_distribution(rng)];
+    spec.window_type = sample_window_type<T>(rng);
+
+    const size_t max_offset = target_length > spec.fft_size ? target_length - spec.fft_size : 0;
+    std::uniform_int_distribution<size_t> offset_distribution(0, max_offset);
+    spec.offset = max_offset > 0 ? offset_distribution(rng) : 0;
+
+    std::uniform_real_distribution<T> unit_distribution(static_cast<T>(0), static_cast<T>(1));
+    switch (spec.window_type) {
+        case RandomWindowType::Hann:
+        case RandomWindowType::Hamming:
+        case RandomWindowType::Blackman:
+            spec.parameter = static_cast<T>(0);
+            break;
+        case RandomWindowType::Kaiser:
+            spec.parameter = static_cast<T>(4) + unit_distribution(rng) * static_cast<T>(10);
+            break;
+        case RandomWindowType::Tukey:
+            spec.parameter = static_cast<T>(0.1) + unit_distribution(rng) * static_cast<T>(0.8);
+            break;
+        case RandomWindowType::Gaussian:
+            spec.parameter = static_cast<T>(0.2) + unit_distribution(rng) * static_cast<T>(0.4);
+            break;
+        default:
+            spec.parameter = static_cast<T>(0);
+            break;
+    }
+
+    return spec;
+}
+
+template <typename T>
+inline RandomLossSchedule<T> make_random_loss_schedule(const std::vector<T>& target_audio,
+                                                       uint64_t schedule_seed) {
+    std::mt19937_64 rng(schedule_seed);
+    RandomLossSchedule<T> schedule;
+    schedule.windows.reserve(kRandomWindowCount);
+
+    for (size_t window_index = 0; window_index < kRandomWindowCount; ++window_index) {
+        RandomLossWindow<T> loss_window;
+        loss_window.window = sample_window_spec<T>(target_audio.size(), rng);
+        loss_window.features.reserve(kRandomFeaturesPerWindow);
+
+        const size_t num_freqs = loss_window.window.fft_size / 2 + 1;
+        const size_t full_coeffs = std::max<size_t>(2, std::min(kFullSpectrumCoeffLimit, num_freqs));
+        std::bernoulli_distribution family_distribution(0.5);
+        std::uniform_int_distribution<size_t> full_coeff_distribution(1, full_coeffs - 1);
+        std::uniform_int_distribution<size_t> band_count_distribution(
+            8, std::min<size_t>(32, std::max<size_t>(8, num_freqs)));
+
+        for (size_t feature_index = 0; feature_index < kRandomFeaturesPerWindow; ++feature_index) {
+            RandomCepstralFeatureSpec<T> feature;
+            const bool use_bands = family_distribution(rng);
+            if (!use_bands) {
+                feature.family = RandomCepstralFeatureFamily::FullSpectrum;
+                feature.coefficient = full_coeff_distribution(rng);
+                feature.band_count = 0;
+            } else {
+                feature.family = RandomCepstralFeatureFamily::LogBands;
+                feature.band_count = band_count_distribution(rng);
+                const size_t clamped_band_count = std::min(feature.band_count, num_freqs);
+                std::uniform_int_distribution<size_t> band_coeff_distribution(
+                    1, std::max<size_t>(1, clamped_band_count - 1));
+                feature.coefficient = band_coeff_distribution(rng);
+                feature.band_count = clamped_band_count;
+            }
+            loss_window.features.push_back(feature);
+        }
+
+        schedule.windows.push_back(std::move(loss_window));
+    }
+
+    return schedule;
+}
+
+template <typename T>
+struct PreparedBandContext {
+    size_t band_count = 0;
+    std::vector<size_t> band_edges;
+    std::vector<T> band_weights;
+    std::vector<T> cepstral_weights;
+    std::vector<T> target_band_spectrum;
 };
 
-/**
- * Precompute all target features including STFTs at multiple scales.
- * Uses fixed hop positions (win_length/4) for deterministic evaluation.
- * All computationally expensive operations happen once during construction.
- */
+template <typename T>
+struct PreparedFeature {
+    RandomCepstralFeatureFamily family = RandomCepstralFeatureFamily::FullSpectrum;
+    size_t coefficient = 0;
+    size_t band_count = 0;
+    T weight = static_cast<T>(1);
+    T target_value = static_cast<T>(0);
+};
+
+template <typename T>
+struct PreparedWindowContext {
+    RandomWindowSpec<T> window;
+    std::vector<T> frequency_weights;
+    std::vector<T> target_spectrum;
+    std::vector<T> full_cepstral_weights;
+    std::vector<PreparedBandContext<T>> band_contexts;
+    std::vector<PreparedFeature<T>> features;
+};
+
+template <typename T>
+inline PreparedBandContext<T>* find_band_context(std::vector<PreparedBandContext<T>>& band_contexts,
+                                                 size_t band_count) {
+    for (auto& context : band_contexts) {
+        if (context.band_count == band_count) {
+            return &context;
+        }
+    }
+    return nullptr;
+}
+
+template <typename T>
+inline PreparedBandContext<T> make_band_context(const std::vector<T>& target_spectrum,
+                                                const std::vector<T>& frequency_weights,
+                                                size_t band_count) {
+    PreparedBandContext<T> context;
+    context.band_count = band_count;
+    context.band_edges = compute_log_band_edges<T>(target_spectrum.size(), band_count);
+    context.band_weights = aggregate_band_weights(frequency_weights, context.band_edges);
+    context.cepstral_weights = perceptual_cepstral_weights(context.band_weights, band_count);
+    context.target_band_spectrum =
+        compute_band_spectrum(target_spectrum, context.band_edges, frequency_weights);
+    return context;
+}
+
+template <typename T>
+inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& target_audio,
+                                                       const RandomLossWindow<T>& loss_window) {
+    PreparedWindowContext<T> context;
+    context.window = loss_window.window;
+    context.target_spectrum = compute_windowed_magnitude_spectrum(target_audio, loss_window.window);
+    context.frequency_weights = compute_frequency_weights<T>(
+        context.target_spectrum.size(), loss_window.window.fft_size,
+        static_cast<T>(constants::TRAINING_SAMPLE_RATE));
+
+    const size_t full_coeff_count =
+        std::max<size_t>(2, std::min(kFullSpectrumCoeffLimit, context.target_spectrum.size()));
+    context.full_cepstral_weights =
+        perceptual_cepstral_weights(context.frequency_weights, full_coeff_count);
+    context.features.reserve(loss_window.features.size());
+
+    for (const auto& feature_spec : loss_window.features) {
+        PreparedFeature<T> feature;
+        feature.family = feature_spec.family;
+        feature.coefficient = feature_spec.coefficient;
+        feature.band_count = feature_spec.band_count;
+
+        if (feature.family == RandomCepstralFeatureFamily::FullSpectrum) {
+            const size_t coeff_index =
+                std::min(feature.coefficient, context.full_cepstral_weights.size() - 1);
+            feature.coefficient = coeff_index;
+            feature.weight = context.full_cepstral_weights[coeff_index];
+            feature.target_value = compute_weighted_cepstral_coefficient(
+                context.target_spectrum, context.frequency_weights, coeff_index);
+        } else {
+            PreparedBandContext<T>* band_context =
+                find_band_context(context.band_contexts, feature.band_count);
+            if (band_context == nullptr) {
+                context.band_contexts.push_back(make_band_context(
+                    context.target_spectrum, context.frequency_weights, feature.band_count));
+                band_context = &context.band_contexts.back();
+            }
+            const size_t coeff_index =
+                std::min(feature.coefficient, band_context->cepstral_weights.size() - 1);
+            feature.coefficient = coeff_index;
+            feature.weight = band_context->cepstral_weights[coeff_index];
+            feature.target_value = compute_weighted_cepstral_coefficient(
+                band_context->target_band_spectrum, band_context->band_weights, coeff_index);
+        }
+
+        context.features.push_back(feature);
+    }
+
+    return context;
+}
+
+template <typename T>
+inline std::vector<PreparedWindowContext<T>> prepare_schedule(
+    const TargetFeaturesFast<T>& target_features, const RandomLossSchedule<T>& schedule) {
+    std::vector<PreparedWindowContext<T>> contexts;
+    contexts.reserve(schedule.windows.size());
+    for (const auto& window : schedule.windows) {
+        contexts.push_back(prepare_window_context(target_features.target_audio, window));
+    }
+    return contexts;
+}
+
+template <typename T>
+inline T evaluate_loss_for_signal(const std::vector<T>& generated,
+                                  const std::vector<PreparedWindowContext<T>>& contexts) {
+    if (contexts.empty()) {
+        return static_cast<T>(0);
+    }
+
+    T total_loss = static_cast<T>(0);
+    size_t total_terms = 0;
+    for (const auto& context : contexts) {
+        const auto spectrum = compute_windowed_magnitude_spectrum(generated, context.window);
+        std::vector<std::pair<size_t, std::vector<T>>> generated_band_cache;
+        generated_band_cache.reserve(context.band_contexts.size());
+
+        for (const auto& feature : context.features) {
+            T generated_value = static_cast<T>(0);
+            if (feature.family == RandomCepstralFeatureFamily::FullSpectrum) {
+                generated_value = compute_weighted_cepstral_coefficient(
+                    spectrum, context.frequency_weights, feature.coefficient);
+            } else {
+                auto cache_it = std::find_if(
+                    generated_band_cache.begin(), generated_band_cache.end(),
+                    [&](const auto& entry) { return entry.first == feature.band_count; });
+                if (cache_it == generated_band_cache.end()) {
+                    const auto* band_context = [&]() -> const PreparedBandContext<T>* {
+                        for (const auto& candidate : context.band_contexts) {
+                            if (candidate.band_count == feature.band_count) {
+                                return &candidate;
+                            }
+                        }
+                        return nullptr;
+                    }();
+                    if (band_context == nullptr) {
+                        continue;
+                    }
+                    generated_band_cache.emplace_back(
+                        feature.band_count,
+                        compute_band_spectrum(spectrum, band_context->band_edges,
+                                              context.frequency_weights));
+                    cache_it = std::prev(generated_band_cache.end());
+                }
+
+                const auto* band_context = [&]() -> const PreparedBandContext<T>* {
+                    for (const auto& candidate : context.band_contexts) {
+                        if (candidate.band_count == feature.band_count) {
+                            return &candidate;
+                        }
+                    }
+                    return nullptr;
+                }();
+                if (band_context == nullptr) {
+                    continue;
+                }
+                generated_value = compute_weighted_cepstral_coefficient(
+                    cache_it->second, band_context->band_weights, feature.coefficient);
+            }
+
+            total_loss += feature.weight * std::abs(generated_value - feature.target_value);
+            ++total_terms;
+        }
+    }
+
+    return total_terms > 0 ? total_loss / static_cast<T>(total_terms) : static_cast<T>(0);
+}
+
 template <typename T>
 inline TargetFeaturesFast<T> precompute_target_features_fast(
-    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512}) {
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {2048}) {
     TargetFeaturesFast<T> features;
-    const size_t num_scales = fft_sizes.size();
-
+    features.target_audio = target;
     features.fft_sizes = fft_sizes;
-    features.num_freqs.resize(num_scales);
-    features.num_frames.resize(num_scales);
-    features.stfts.resize(num_scales);
-    features.positions.resize(num_scales);
-    features.fine_weights.resize(num_scales);
-    features.fine_cepstra.resize(num_scales);
-    features.fine_cepstral_weights.resize(num_scales);
-    features.num_fine_cepstra.resize(num_scales);
-    features.fine_centered_logs.resize(num_scales);
-    features.fine_log_deltas.resize(num_scales);
-    features.fine_delta_weights.resize(num_scales);
-    features.band_stfts.resize(num_scales);
-    features.band_edges.resize(num_scales);
-    features.band_weights.resize(num_scales);
-    features.num_bands.resize(num_scales);
-    features.cepstra.resize(num_scales);
-    features.cepstral_weights.resize(num_scales);
-    features.num_cepstra.resize(num_scales);
-    features.band_centered_logs.resize(num_scales);
-    features.band_log_deltas.resize(num_scales);
-    features.band_delta_weights.resize(num_scales);
-    features.band_centroids.resize(num_scales);
-    features.band_flux.resize(num_scales);
-    features.envelope = detail::compute_envelope(target);
-    features.envelope_delta = detail::compute_delta(features.envelope);
-    features.zcr = detail::compute_windowed_zcr(target);
-    features.zcr_delta = detail::compute_delta(features.zcr);
+    features.num_freqs.resize(fft_sizes.size());
+    features.num_frames.resize(fft_sizes.size());
+    features.stfts.resize(fft_sizes.size());
 
-    for (size_t scale = 0; scale < num_scales; ++scale) {
-        size_t n_fft = fft_sizes[scale];
-        size_t win_length = n_fft;
-        features.num_freqs[scale] = n_fft / 2 + 1;
-        features.fine_weights[scale] = detail::compute_frequency_weights(
-            features.num_freqs[scale], n_fft, static_cast<T>(constants::TRAINING_SAMPLE_RATE));
-
-        auto positions = detail::generate_fixed_positions<T>(target.size(), win_length);
-        features.positions[scale] = positions;
-        features.num_frames[scale] = positions.size();
-
-        if (!positions.empty()) {
-            // Precompute the exact-frequency target spectrogram once, then derive the
-            // fine cepstral and coarse representations from that same spectrogram.
-            features.stfts[scale] =
-                detail::stft_with_positions(target, win_length, n_fft, positions);
-            features.num_fine_cepstra[scale] = std::min<size_t>(16, features.num_freqs[scale]);
-            features.fine_cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
-                features.fine_weights[scale], features.num_fine_cepstra[scale]);
-            features.fine_cepstra[scale] = detail::weighted_cepstrum_spectrogram(
-                features.stfts[scale], features.num_freqs[scale], features.fine_weights[scale],
-                features.num_fine_cepstra[scale]);
-            features.fine_centered_logs[scale] = detail::center_log_spectrogram(
-                features.stfts[scale], features.num_freqs[scale]);
-            features.fine_log_deltas[scale] = detail::log_spectral_delta(
-                features.stfts[scale], features.num_freqs[scale]);
-            features.fine_delta_weights[scale] =
-                detail::adjacent_feature_weights(features.fine_weights[scale]);
-            const size_t band_count = std::min<size_t>(16, std::max<size_t>(8, n_fft / 128));
-            features.band_edges[scale] =
-                detail::compute_log_band_edges<T>(features.num_freqs[scale], band_count);
-            features.num_bands[scale] = features.band_edges[scale].size() - 1;
-            features.band_stfts[scale] = detail::band_average_spectrogram(
-                features.stfts[scale], features.num_freqs[scale], features.band_edges[scale],
-                features.fine_weights[scale]);
-            features.band_weights[scale] = detail::aggregate_band_weights(
-                features.fine_weights[scale], features.band_edges[scale]);
-            features.num_cepstra[scale] = std::min<size_t>(8, features.num_bands[scale]);
-            features.cepstral_weights[scale] = detail::perceptual_cepstral_weights<T>(
-                features.band_weights[scale], features.num_cepstra[scale]);
-            features.band_centered_logs[scale] = detail::center_log_spectrogram(
-                features.band_stfts[scale], features.num_bands[scale]);
-            features.band_log_deltas[scale] = detail::log_spectral_delta(
-                features.band_stfts[scale], features.num_bands[scale]);
-            features.band_delta_weights[scale] =
-                detail::adjacent_feature_weights(features.band_weights[scale]);
-            features.band_centroids[scale] = detail::compute_band_centroid_trajectory(
-                features.band_stfts[scale], features.num_bands[scale]);
-            features.band_flux[scale] = detail::compute_spectral_flux_trajectory(
-                features.band_stfts[scale], features.num_bands[scale]);
-            features.cepstra[scale] = detail::weighted_cepstrum_spectrogram(
-                features.band_stfts[scale], features.num_bands[scale], features.band_weights[scale],
-                features.num_cepstra[scale]);
-        }
+    for (size_t i = 0; i < fft_sizes.size(); ++i) {
+        const size_t fft_size = fft_sizes[i];
+        const size_t hop = std::max<size_t>(1, fft_size / 4);
+        features.num_freqs[i] = fft_size / 2 + 1;
+        features.stfts[i] = compute_summary_stft(target, fft_size, hop, &features.num_frames[i]);
     }
 
     return features;
 }
 
-/**
- * Fast single audio loss computation.
- * Thread-safe: uses thread-local buffers internally.
- * Compares generated STFT against precomputed target STFTs at fixed positions.
- */
+}  // namespace detail
+
 template <typename T>
-inline T compute_audio_loss_fast(const std::vector<T>& generated,
-                                 const TargetFeaturesFast<T>& target_features) {
-    T fine_spectral_loss = static_cast<T>(0);
-    T coarse_spectral_loss = static_cast<T>(0);
-    T fine_centered_loss = static_cast<T>(0);
-    T coarse_centered_loss = static_cast<T>(0);
-    T fine_delta_loss = static_cast<T>(0);
-    T coarse_delta_loss = static_cast<T>(0);
-    T fine_cepstral_loss = static_cast<T>(0);
-    T coarse_cepstral_loss = static_cast<T>(0);
-    T envelope_loss = static_cast<T>(0);
-    T envelope_delta_loss = static_cast<T>(0);
-    T zcr_loss = static_cast<T>(0);
-    T zcr_delta_loss = static_cast<T>(0);
-    T centroid_loss = static_cast<T>(0);
-    T flux_loss = static_cast<T>(0);
-    size_t active_scales = 0;
-    const size_t num_scales = target_features.fft_sizes.size();
-
-    for (size_t scale = 0; scale < num_scales; ++scale) {
-        size_t n_fft = target_features.fft_sizes[scale];
-        size_t win_length = n_fft;
-        size_t num_freqs = target_features.num_freqs[scale];
-        if (target_features.num_frames[scale] == 0 || target_features.stfts[scale].empty()) {
-            continue;
-        }
-
-        const auto& positions = target_features.positions[scale];
-        // Compute the generated spectrogram once per scale, then reuse it for both
-        // the fine exact-frequency loss and the coarse band-over-time loss.
-        auto x_stft = detail::stft_with_positions(generated, win_length, n_fft, positions);
-        if (x_stft.size() != target_features.stfts[scale].size()) {
-            continue;
-        }
-
-        const auto& y_stft = target_features.stfts[scale];
-        fine_spectral_loss += detail::log_magnitude_loss(x_stft, y_stft,
-                                                         target_features.fine_weights[scale],
-                                                         num_freqs);
-        const auto x_fine_centered =
-            detail::center_log_spectrogram(x_stft, num_freqs);
-        if (!x_fine_centered.empty() &&
-            x_fine_centered.size() == target_features.fine_centered_logs[scale].size()) {
-            fine_centered_loss += detail::weighted_l1_loss(
-                x_fine_centered, target_features.fine_centered_logs[scale],
-                target_features.fine_weights[scale], num_freqs);
-        }
-        const auto x_fine_delta = detail::log_spectral_delta(x_stft, num_freqs);
-        if (!x_fine_delta.empty() &&
-            x_fine_delta.size() == target_features.fine_log_deltas[scale].size()) {
-            fine_delta_loss += detail::weighted_l1_loss(
-                x_fine_delta, target_features.fine_log_deltas[scale],
-                target_features.fine_delta_weights[scale], num_freqs - 1);
-        }
-
-        const auto x_fine_cepstra = detail::weighted_cepstrum_spectrogram(
-            x_stft, num_freqs, target_features.fine_weights[scale],
-            target_features.num_fine_cepstra[scale]);
-        if (!x_fine_cepstra.empty() &&
-            x_fine_cepstra.size() == target_features.fine_cepstra[scale].size()) {
-            fine_cepstral_loss += detail::weighted_l1_loss(
-                x_fine_cepstra, target_features.fine_cepstra[scale],
-                target_features.fine_cepstral_weights[scale],
-                target_features.num_fine_cepstra[scale]);
-        }
-
-        const auto x_band_stft = detail::band_average_spectrogram(
-            x_stft, num_freqs, target_features.band_edges[scale],
-            target_features.fine_weights[scale]);
-        if (!x_band_stft.empty() && x_band_stft.size() == target_features.band_stfts[scale].size()) {
-            coarse_spectral_loss += detail::log_magnitude_loss(
-                x_band_stft, target_features.band_stfts[scale],
-                target_features.band_weights[scale], target_features.num_bands[scale]);
-            const auto x_band_centered = detail::center_log_spectrogram(
-                x_band_stft, target_features.num_bands[scale]);
-            if (!x_band_centered.empty() &&
-                x_band_centered.size() == target_features.band_centered_logs[scale].size()) {
-                coarse_centered_loss += detail::weighted_l1_loss(
-                    x_band_centered, target_features.band_centered_logs[scale],
-                    target_features.band_weights[scale], target_features.num_bands[scale]);
-            }
-            const auto x_band_delta = detail::log_spectral_delta(
-                x_band_stft, target_features.num_bands[scale]);
-            if (!x_band_delta.empty() &&
-                x_band_delta.size() == target_features.band_log_deltas[scale].size()) {
-                coarse_delta_loss += detail::weighted_l1_loss(
-                    x_band_delta, target_features.band_log_deltas[scale],
-                    target_features.band_delta_weights[scale],
-                    target_features.num_bands[scale] - 1);
-            }
-            const auto x_band_centroids = detail::compute_band_centroid_trajectory(
-                x_band_stft, target_features.num_bands[scale]);
-            if (!x_band_centroids.empty() &&
-                x_band_centroids.size() == target_features.band_centroids[scale].size()) {
-                centroid_loss +=
-                    detail::l2_loss(x_band_centroids, target_features.band_centroids[scale]);
-            }
-            const auto x_band_flux = detail::compute_spectral_flux_trajectory(
-                x_band_stft, target_features.num_bands[scale]);
-            if (!x_band_flux.empty() &&
-                x_band_flux.size() == target_features.band_flux[scale].size()) {
-                flux_loss += detail::l2_loss(x_band_flux, target_features.band_flux[scale]);
-            }
-            const auto x_cepstra = detail::weighted_cepstrum_spectrogram(
-                x_band_stft, target_features.num_bands[scale], target_features.band_weights[scale],
-                target_features.num_cepstra[scale]);
-            if (!x_cepstra.empty() && x_cepstra.size() == target_features.cepstra[scale].size()) {
-                coarse_cepstral_loss += detail::weighted_l1_loss(
-                    x_cepstra, target_features.cepstra[scale],
-                    target_features.cepstral_weights[scale], target_features.num_cepstra[scale]);
-            }
-        }
-
-        ++active_scales;
-    }
-
-    if (active_scales == 0) {
-        return static_cast<T>(0);
-    }
-
-    fine_spectral_loss /= static_cast<T>(active_scales);
-    coarse_spectral_loss /= static_cast<T>(active_scales);
-    fine_centered_loss /= static_cast<T>(active_scales);
-    coarse_centered_loss /= static_cast<T>(active_scales);
-    fine_delta_loss /= static_cast<T>(active_scales);
-    coarse_delta_loss /= static_cast<T>(active_scales);
-    fine_cepstral_loss /= static_cast<T>(active_scales);
-    coarse_cepstral_loss /= static_cast<T>(active_scales);
-    centroid_loss /= static_cast<T>(active_scales);
-    flux_loss /= static_cast<T>(active_scales);
-
-    if (!target_features.envelope.empty()) {
-        const auto generated_envelope = detail::compute_envelope(generated);
-        envelope_loss = detail::l2_loss(generated_envelope, target_features.envelope);
-        envelope_delta_loss = detail::l2_loss(detail::compute_delta(generated_envelope),
-                                              target_features.envelope_delta);
-    }
-    if (!target_features.zcr.empty()) {
-        const auto generated_zcr = detail::compute_windowed_zcr(generated);
-        zcr_loss = detail::l2_loss(generated_zcr, target_features.zcr);
-        zcr_delta_loss = detail::l2_loss(detail::compute_delta(generated_zcr),
-                                         target_features.zcr_delta);
-    }
-
-    const T spectral_loss = static_cast<T>(0.20) * fine_spectral_loss +
-                            static_cast<T>(0.10) * coarse_spectral_loss +
-                            static_cast<T>(0.14) * fine_centered_loss +
-                            static_cast<T>(0.10) * coarse_centered_loss +
-                            static_cast<T>(0.10) * fine_delta_loss +
-                            static_cast<T>(0.08) * coarse_delta_loss +
-                            static_cast<T>(0.22) * fine_cepstral_loss +
-                            static_cast<T>(0.12) * coarse_cepstral_loss;
-    const T shape_loss = static_cast<T>(0.012) * envelope_loss +
-                         static_cast<T>(0.006) * envelope_delta_loss +
-                         static_cast<T>(0.004) * zcr_loss +
-                         static_cast<T>(0.002) * zcr_delta_loss +
-                         static_cast<T>(0.010) * centroid_loss +
-                         static_cast<T>(0.014) * flux_loss;
-    return spectral_loss + shape_loss;
+inline TargetFeaturesFast<T> precompute_target_features_fast(
+    const std::vector<T>& target, const std::vector<size_t>& fft_sizes = {2048}) {
+    return detail::precompute_target_features_fast(target, fft_sizes);
 }
 
-/**
- * Batch loss computation - process multiple generated signals in parallel.
- */
 template <typename T>
 inline std::vector<T> compute_audio_loss_batch(const std::vector<std::vector<T>>& generated_batch,
-                                               const TargetFeaturesFast<T>& target_features) {
-    size_t batch_size = generated_batch.size();
-    std::vector<T> losses(batch_size);
+                                               const TargetFeaturesFast<T>& target_features,
+                                               uint64_t schedule_seed) {
+    const auto schedule = detail::make_random_loss_schedule(target_features.target_audio, schedule_seed);
+    const auto prepared = detail::prepare_schedule(target_features, schedule);
 
-#if defined(HAS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < batch_size; ++i) {
-        losses[i] = compute_audio_loss_fast(generated_batch[i], target_features);
+    std::vector<T> losses(generated_batch.size(), static_cast<T>(0));
+    for (size_t i = 0; i < generated_batch.size(); ++i) {
+        losses[i] = detail::evaluate_loss_for_signal(generated_batch[i], prepared);
     }
-#else
-    for (size_t i = 0; i < batch_size; ++i) {
-        losses[i] = compute_audio_loss_fast(generated_batch[i], target_features);
-    }
-#endif
-
     return losses;
 }
 
-/**
- * Thread-safe loss function class.
- * Safe to call from multiple threads during parallel DE evaluation.
- * Precomputes all target features at construction time.
- */
+template <typename T>
+inline std::vector<T> compute_audio_loss_batch(const std::vector<std::vector<T>>& generated_batch,
+                                               const TargetFeaturesFast<T>& target_features) {
+    return compute_audio_loss_batch(generated_batch, target_features, 0);
+}
+
 template <typename T>
 class LossFunction {
    public:
-    LossFunction(const std::vector<T>& target,
-                 const std::vector<size_t>& fft_sizes = {4096, 2048, 1024, 512})
-        : target_(target), fft_sizes_(fft_sizes) {
-        features_ = precompute_target_features_fast(target, fft_sizes);
-    }
+    LossFunction(const std::vector<T>& target, uint32_t base_seed = 0,
+                 const std::vector<size_t>& fft_sizes = {2048})
+        : base_seed_(base_seed), features_(precompute_target_features_fast(target, fft_sizes)) {}
 
-    // Single loss computation - thread safe
     T operator()(const std::vector<T>& generated) const {
-        return compute_audio_loss_fast(generated, features_);
+        const uint64_t schedule_seed =
+            detail::mix_seed(base_seed_, schedule_counter_.fetch_add(1, std::memory_order_relaxed));
+        return compute_audio_loss_batch<T>({generated}, features_, schedule_seed).front();
     }
 
-    // Batch loss computation - parallel processing
     std::vector<T> compute_batch(const std::vector<std::vector<T>>& generated_batch) const {
-        return compute_audio_loss_batch(generated_batch, features_);
+        const uint64_t schedule_seed =
+            detail::mix_seed(base_seed_, schedule_counter_.fetch_add(1, std::memory_order_relaxed));
+        return compute_audio_loss_batch(generated_batch, features_, schedule_seed);
     }
 
-    // Access precomputed features (for debugging/analysis)
     const TargetFeaturesFast<T>& features() const { return features_; }
 
    private:
-    std::vector<T> target_;
-    std::vector<size_t> fft_sizes_;
+    uint32_t base_seed_ = 0;
+    mutable std::atomic<uint64_t> schedule_counter_ {0};
     TargetFeaturesFast<T> features_;
 };
 
