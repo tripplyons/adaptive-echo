@@ -239,17 +239,9 @@ float evaluate_settings(const std::vector<float>& settings,
 std::vector<float> evaluate_settings_batch(const std::vector<std::vector<float>>& settings_batch,
                                            const std::vector<float>& time,
                                            const LossFunction<float>& loss_fn) {
-    std::vector<std::vector<float>> rendered_batch(settings_batch.size());
-
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for (size_t i = 0; i < settings_batch.size(); ++i) {
-        rendered_batch[i] =
-            synth(settings_batch[i], time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
-    }
-
-    return loss_fn.compute_batch(rendered_batch);
+    return loss_fn.evaluate_generated_batch(settings_batch.size(), [&](size_t i) {
+        return synth(settings_batch[i], time, static_cast<float>(constants::TRAINING_SAMPLE_RATE));
+    });
 }
 
 CandidateResult run_coarse_search(const std::vector<float>& summary_seed,

@@ -9,6 +9,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -329,36 +330,68 @@ inline std::vector<T> make_window(const RandomWindowSpec<T>& spec) {
 }
 
 template <typename T>
-inline std::vector<T> compute_windowed_magnitude_spectrum(const std::vector<T>& audio,
-                                                          const RandomWindowSpec<T>& spec) {
-    using complex_t = std::complex<T>;
+struct PreparedSpectrumTransform {
+    RandomWindowSpec<T> spec;
+    std::vector<T> window;
+    T scale = static_cast<T>(1);
+};
 
-    const auto window = make_window(spec);
-    std::vector<complex_t> frame(spec.fft_size, complex_t(0, 0));
-    std::vector<complex_t> fft_output(spec.fft_size, complex_t(0, 0));
+template <typename T>
+struct SpectrumScratch {
+    std::vector<std::complex<T>> frame;
+    std::vector<std::complex<T>> fft_output;
+
+    void resize(size_t fft_size) {
+        frame.resize(fft_size);
+        fft_output.resize(fft_size);
+    }
+};
+
+template <typename T>
+inline PreparedSpectrumTransform<T> prepare_spectrum_transform(const RandomWindowSpec<T>& spec) {
+    PreparedSpectrumTransform<T> prepared;
+    prepared.spec = spec;
+    prepared.window = make_window(spec);
+    const T window_sum =
+        std::max(std::accumulate(prepared.window.begin(), prepared.window.end(), static_cast<T>(0)),
+                 static_cast<T>(1e-8));
+    prepared.scale = static_cast<T>(1) / window_sum;
+    return prepared;
+}
+
+template <typename T>
+inline std::vector<T> compute_windowed_magnitude_spectrum(
+    const std::vector<T>& audio, const PreparedSpectrumTransform<T>& prepared) {
+    using complex_t = std::complex<T>;
+    const auto& spec = prepared.spec;
+
+    thread_local SpectrumScratch<T> scratch;
+    scratch.resize(spec.fft_size);
     for (size_t i = 0; i < spec.fft_size; ++i) {
         const size_t index = spec.offset + i;
         const T sample = index < audio.size() ? audio[index] : static_cast<T>(0);
-        frame[i] = complex_t(sample * window[i], 0);
+        scratch.frame[i] = complex_t(sample * prepared.window[i], 0);
     }
 
     pocketfft::shape_t shape{spec.fft_size};
     pocketfft::stride_t stride_in{sizeof(complex_t)};
     pocketfft::stride_t stride_out{sizeof(complex_t)};
     pocketfft::shape_t axes{0};
-    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true, frame.data(), fft_output.data(),
-                      T(1));
+    pocketfft::c2c<T>(shape, stride_in, stride_out, axes, true, scratch.frame.data(),
+                      scratch.fft_output.data(), T(1));
 
     const size_t num_freqs = spec.fft_size / 2 + 1;
     std::vector<T> magnitude(num_freqs, static_cast<T>(0));
-    const T window_sum =
-        std::max(std::accumulate(window.begin(), window.end(), static_cast<T>(0)),
-                 static_cast<T>(1e-8));
-    const T scale = static_cast<T>(1) / window_sum;
     for (size_t bin = 0; bin < num_freqs; ++bin) {
-        magnitude[bin] = std::abs(fft_output[bin]) * scale;
+        magnitude[bin] = std::abs(scratch.fft_output[bin]) * prepared.scale;
     }
     return magnitude;
+}
+
+template <typename T>
+inline std::vector<T> compute_windowed_magnitude_spectrum(const std::vector<T>& audio,
+                                                          const RandomWindowSpec<T>& spec) {
+    return compute_windowed_magnitude_spectrum(audio, prepare_spectrum_transform(spec));
 }
 
 template <typename T>
@@ -387,12 +420,22 @@ inline std::vector<T> compute_summary_stft(const std::vector<T>& audio, size_t f
         }
     }
 
-    std::vector<T> stft(frames.size() * num_freqs, static_cast<T>(0));
+    std::vector<PreparedSpectrumTransform<T>> prepared_frames(frames.size());
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
     for (size_t frame_index = 0; frame_index < frames.size(); ++frame_index) {
-        auto spectrum = compute_windowed_magnitude_spectrum(audio, frames[frame_index]);
-        auto destination =
-            stft.begin() + static_cast<std::ptrdiff_t>(frame_index * num_freqs);
-        std::copy(spectrum.begin(), spectrum.end(), destination);
+        prepared_frames[frame_index] = prepare_spectrum_transform(frames[frame_index]);
+    }
+
+    std::vector<T> stft(frames.size() * num_freqs, static_cast<T>(0));
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
+    for (size_t frame_index = 0; frame_index < frames.size(); ++frame_index) {
+        auto spectrum = compute_windowed_magnitude_spectrum(audio, prepared_frames[frame_index]);
+        const size_t offset = frame_index * num_freqs;
+        std::copy(spectrum.begin(), spectrum.end(), stft.begin() + static_cast<std::ptrdiff_t>(offset));
     }
 
     if (num_frames_out != nullptr) {
@@ -617,6 +660,7 @@ struct PreparedFeature {
     RandomCepstralFeatureFamily family = RandomCepstralFeatureFamily::FullSpectrum;
     size_t coefficient = 0;
     size_t band_count = 0;
+    size_t band_context_index = std::numeric_limits<size_t>::max();
     T weight = static_cast<T>(1);
     T target_value = static_cast<T>(0);
 };
@@ -624,6 +668,7 @@ struct PreparedFeature {
 template <typename T>
 struct PreparedWindowContext {
     RandomWindowSpec<T> window;
+    PreparedSpectrumTransform<T> spectrum_transform;
     std::vector<T> frequency_weights;
     std::vector<T> target_spectrum;
     std::vector<size_t> spectral_group_edges_16;
@@ -679,7 +724,9 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
                                                        const RandomLossWindow<T>& loss_window) {
     PreparedWindowContext<T> context;
     context.window = loss_window.window;
-    context.target_spectrum = compute_windowed_magnitude_spectrum(target_audio, loss_window.window);
+    context.spectrum_transform = prepare_spectrum_transform(loss_window.window);
+    context.target_spectrum =
+        compute_windowed_magnitude_spectrum(target_audio, context.spectrum_transform);
     context.frequency_weights = compute_frequency_weights<T>(
         context.target_spectrum.size(), loss_window.window.fft_size,
         static_cast<T>(constants::TRAINING_SAMPLE_RATE));
@@ -717,19 +764,24 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
             feature.target_value = compute_weighted_cepstral_coefficient(
                 context.target_spectrum, context.frequency_weights, coeff_index);
         } else {
-            PreparedBandContext<T>* band_context =
-                find_band_context(context.band_contexts, feature.band_count);
-            if (band_context == nullptr) {
+            size_t band_context_index = 0;
+            for (; band_context_index < context.band_contexts.size(); ++band_context_index) {
+                if (context.band_contexts[band_context_index].band_count == feature.band_count) {
+                    break;
+                }
+            }
+            if (band_context_index == context.band_contexts.size()) {
                 context.band_contexts.push_back(make_band_context(
                     context.target_spectrum, context.frequency_weights, feature.band_count));
-                band_context = &context.band_contexts.back();
             }
+            const auto& band_context = context.band_contexts[band_context_index];
+            feature.band_context_index = band_context_index;
             const size_t coeff_index =
-                std::min(feature.coefficient, band_context->cepstral_weights.size() - 1);
+                std::min(feature.coefficient, band_context.cepstral_weights.size() - 1);
             feature.coefficient = coeff_index;
-            feature.weight = band_context->cepstral_weights[coeff_index];
+            feature.weight = band_context.cepstral_weights[coeff_index];
             feature.target_value = compute_weighted_cepstral_coefficient(
-                band_context->target_band_spectrum, band_context->band_weights, coeff_index);
+                band_context.target_band_spectrum, band_context.band_weights, coeff_index);
         }
 
         cepstral_reference += feature.weight * std::abs(feature.target_value);
@@ -753,10 +805,12 @@ inline PreparedWindowContext<T> prepare_window_context(const std::vector<T>& tar
 template <typename T>
 inline std::vector<PreparedWindowContext<T>> prepare_schedule(
     const TargetFeaturesFast<T>& target_features, const RandomLossSchedule<T>& schedule) {
-    std::vector<PreparedWindowContext<T>> contexts;
-    contexts.reserve(schedule.windows.size());
-    for (const auto& window : schedule.windows) {
-        contexts.push_back(prepare_window_context(target_features.target_audio, window));
+    std::vector<PreparedWindowContext<T>> contexts(schedule.windows.size());
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
+    for (size_t i = 0; i < schedule.windows.size(); ++i) {
+        contexts[i] = prepare_window_context(target_features.target_audio, schedule.windows[i]);
     }
     return contexts;
 }
@@ -773,7 +827,8 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
     size_t total_cepstral_terms = 0;
     size_t total_spectral_terms = 0;
     for (const auto& context : contexts) {
-        const auto spectrum = compute_windowed_magnitude_spectrum(generated, context.window);
+        const auto spectrum =
+            compute_windowed_magnitude_spectrum(generated, context.spectrum_transform);
         const auto grouped_spectrum_16 =
             compute_grouped_magnitude_sums(spectrum, context.spectral_group_edges_16);
         const auto grouped_spectrum_4 =
@@ -787,38 +842,25 @@ inline T evaluate_loss_for_signal(const std::vector<T>& generated,
         spectral_loss += (full_spectral_term + grouped_spectral_term_16 + grouped_spectral_term_4) /
                          (static_cast<T>(3) * context.spectral_normalization);
         ++total_spectral_terms;
-        std::vector<std::pair<size_t, std::vector<T>>> generated_band_cache;
-        generated_band_cache.reserve(context.band_contexts.size());
+        std::vector<std::vector<T>> generated_band_cache(context.band_contexts.size());
+        std::vector<unsigned char> generated_band_ready(context.band_contexts.size(), 0);
 
         for (const auto& feature : context.features) {
             T generated_value = static_cast<T>(0);
             if (feature.family == RandomCepstralFeatureFamily::FullSpectrum) {
                 generated_value = compute_weighted_cepstral_coefficient(
                     spectrum, context.frequency_weights, feature.coefficient);
-            } else {
-                auto cache_it = std::find_if(
-                    generated_band_cache.begin(), generated_band_cache.end(),
-                    [&](const auto& entry) { return entry.first == feature.band_count; });
-                if (cache_it == generated_band_cache.end()) {
-                    const auto* band_context =
-                        find_band_context(context.band_contexts, feature.band_count);
-                    if (band_context == nullptr) {
-                        continue;
-                    }
-                    generated_band_cache.emplace_back(
-                        feature.band_count,
-                        compute_band_spectrum(spectrum, band_context->band_edges,
-                                              context.frequency_weights));
-                    cache_it = std::prev(generated_band_cache.end());
-                }
-
-                const auto* band_context =
-                    find_band_context(context.band_contexts, feature.band_count);
-                if (band_context == nullptr) {
-                    continue;
+            } else if (feature.band_context_index < context.band_contexts.size()) {
+                const size_t band_index = feature.band_context_index;
+                const auto& band_context = context.band_contexts[band_index];
+                if (generated_band_ready[band_index] == 0) {
+                    generated_band_cache[band_index] = compute_band_spectrum(
+                        spectrum, band_context.band_edges, context.frequency_weights);
+                    generated_band_ready[band_index] = 1;
                 }
                 generated_value = compute_weighted_cepstral_coefficient(
-                    cache_it->second, band_context->band_weights, feature.coefficient);
+                    generated_band_cache[band_index], band_context.band_weights,
+                    feature.coefficient);
             }
 
             cepstral_loss += feature.weight * std::abs(generated_value - feature.target_value);
@@ -865,17 +907,40 @@ inline TargetFeaturesFast<T> precompute_target_features_fast(
 }
 
 template <typename T>
+inline T compute_audio_loss(const std::vector<T>& generated,
+                            const TargetFeaturesFast<T>& target_features, uint64_t schedule_seed) {
+    const auto schedule =
+        detail::make_random_loss_schedule(target_features.target_audio, schedule_seed);
+    const auto prepared = detail::prepare_schedule(target_features, schedule);
+    return detail::evaluate_loss_for_signal(generated, prepared);
+}
+
+template <typename T, typename GeneratorFn>
+inline std::vector<T> compute_audio_loss_batch_generated(size_t batch_size,
+                                                         const TargetFeaturesFast<T>& target_features,
+                                                         uint64_t schedule_seed,
+                                                         GeneratorFn&& generator) {
+    const auto schedule =
+        detail::make_random_loss_schedule(target_features.target_audio, schedule_seed);
+    const auto prepared = detail::prepare_schedule(target_features, schedule);
+
+    std::vector<T> losses(batch_size, static_cast<T>(0));
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
+    for (size_t i = 0; i < batch_size; ++i) {
+        losses[i] = detail::evaluate_loss_for_signal(generator(i), prepared);
+    }
+    return losses;
+}
+
+template <typename T>
 inline std::vector<T> compute_audio_loss_batch(const std::vector<std::vector<T>>& generated_batch,
                                                const TargetFeaturesFast<T>& target_features,
                                                uint64_t schedule_seed) {
-    const auto schedule = detail::make_random_loss_schedule(target_features.target_audio, schedule_seed);
-    const auto prepared = detail::prepare_schedule(target_features, schedule);
-
-    std::vector<T> losses(generated_batch.size(), static_cast<T>(0));
-    for (size_t i = 0; i < generated_batch.size(); ++i) {
-        losses[i] = detail::evaluate_loss_for_signal(generated_batch[i], prepared);
-    }
-    return losses;
+    return compute_audio_loss_batch_generated<T>(
+        generated_batch.size(), target_features, schedule_seed,
+        [&](size_t i) -> const std::vector<T>& { return generated_batch[i]; });
 }
 
 template <typename T>
@@ -894,13 +959,21 @@ class LossFunction {
     T operator()(const std::vector<T>& generated) const {
         const uint64_t schedule_seed =
             detail::mix_seed(base_seed_, schedule_counter_.fetch_add(1, std::memory_order_relaxed));
-        return compute_audio_loss_batch<T>({generated}, features_, schedule_seed).front();
+        return compute_audio_loss<T>(generated, features_, schedule_seed);
     }
 
     std::vector<T> compute_batch(const std::vector<std::vector<T>>& generated_batch) const {
         const uint64_t schedule_seed =
             detail::mix_seed(base_seed_, schedule_counter_.fetch_add(1, std::memory_order_relaxed));
         return compute_audio_loss_batch(generated_batch, features_, schedule_seed);
+    }
+
+    template <typename GeneratorFn>
+    std::vector<T> evaluate_generated_batch(size_t batch_size, GeneratorFn&& generator) const {
+        const uint64_t schedule_seed =
+            detail::mix_seed(base_seed_, schedule_counter_.fetch_add(1, std::memory_order_relaxed));
+        return compute_audio_loss_batch_generated<T>(batch_size, features_, schedule_seed,
+                                                     std::forward<GeneratorFn>(generator));
     }
 
     const TargetFeaturesFast<T>& features() const { return features_; }

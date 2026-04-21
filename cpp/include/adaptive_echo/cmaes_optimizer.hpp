@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "adaptive_echo/constants.hpp"
+#include "adaptive_echo/loss.hpp"
 
 namespace adaptive_echo {
 
@@ -167,6 +168,23 @@ inline std::vector<T> evaluate_population(
         }
         return fitness;
     }
+}
+
+template <typename T, typename SynthFn>
+inline std::vector<T> evaluate_population(
+    adaptive_echo::LossFunction<T>& loss_fn, SynthFn synth_fn, const std::vector<T>& time,
+    const std::vector<std::vector<T>>& population_logits) {
+    const size_t lambda = population_logits.size();
+    const size_t num_settings = lambda > 0 ? population_logits.front().size() : 0;
+
+    return loss_fn.evaluate_generated_batch(
+        lambda, [&](size_t i) {
+            std::vector<T> settings(num_settings);
+            for (size_t j = 0; j < num_settings; ++j) {
+                settings[j] = sigmoid_to_unit_interval(population_logits[i][j]);
+            }
+            return synth_fn(settings, time);
+        });
 }
 
 }  // namespace detail
